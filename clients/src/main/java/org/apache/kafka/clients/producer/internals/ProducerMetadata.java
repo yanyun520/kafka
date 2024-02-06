@@ -77,10 +77,18 @@ public class ProducerMetadata extends Metadata {
         }
     }
 
+    /**
+     * 该方法用来判断是全量更新元数据还是部分更新元数据，逻辑相对比较简单，主要用在 KafkaProducer 主线程元数据同步等待时调用
+     * @param topic
+     * @return
+     */
     public synchronized int requestUpdateForTopic(String topic) {
+        // 如果新主题集合中存在该主题
         if (newTopics.contains(topic)) {
+            // 针对新主题集合标记部分更新，并返回版本
             return requestUpdateForNewTopics();
         } else {
+            // 全量更新，并返回版本
             return requestUpdate();
         }
     }
@@ -99,15 +107,29 @@ public class ProducerMetadata extends Metadata {
         return topics.containsKey(topic);
     }
 
+    /**
+     * 该方法用来判断元数据中是否该保留该主题，会在 handleMetadataResponse 即处理元数据响应结果的时候进行调用，我们来看下它是如何判断的。
+     * <p>
+         先判断元数据主题集合中是否存在该主题，如果不存在直接返回false。
+         然后判断该主题是否在新主题集合中，如果存在直接返回true。
+         再判断该主题是否超过了过期时间，如果超过了，就从元数据主题集合中删除该主题，再请求元数据的时候就不用带上该主题，可以有效的减少网络传输数据大小。
+     * </p>
+     *
+     */
     @Override
     public synchronized boolean retainTopic(String topic, boolean isInternal, long nowMs) {
+        // 获取该主题的过期时间
         Long expireMs = topics.get(topic);
+        // 如果为空表示该主题不在元数据主题集合中
         if (expireMs == null) {
             return false;
+            // 判断该主题是否在新集合中
         } else if (newTopics.contains(topic)) {
             return true;
+            // 判断是否超过了过期时间
         } else if (expireMs <= nowMs) {
             log.debug("Removing unused topic {} from the metadata list, expiryMs {} now {}", topic, expireMs, nowMs);
+            // 超过后直接从元数据主题集合中删除该主题
             topics.remove(topic);
             return false;
         } else {
