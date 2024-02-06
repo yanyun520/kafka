@@ -21,6 +21,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * A wrapper for Thread that sets things up nicely
+ * 这里的设计模式非常值得我们去学习，就是在设计一些后台线程的时候，可以把「线程本身」和「线程执行」的逻辑分开，Sender 线程就是线程执行的具体逻辑，
+ * 而 KafkaThread 其实代表了这个「线程本身」、「线程的名字」、「未捕获的异常处理」，「deamon 线程设置」。对 KafkaThread 的启动会自动执行 Sender 线程的 Run() 方法。
  */
 public class KafkaThread extends Thread {
 

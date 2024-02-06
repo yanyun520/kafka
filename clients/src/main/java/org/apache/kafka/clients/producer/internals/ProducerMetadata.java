@@ -34,10 +34,15 @@ import java.util.Set;
 
 public class ProducerMetadata extends Metadata {
     // If a topic hasn't been accessed for this many milliseconds, it is removed from the cache.
+    // 主题元数据过期时间，如果在这个时间段内未被访问，它就会从缓存中删除。
     private final long metadataIdleMs;
 
     /* Topics with expiry time */
+    // map集合，生产者的元数据主题集合，里面保存着
+    // 主题和主题过期时间的对应关系，即 topic, nowMs + metadataIdleMs，
+    // 过期了的主题会被踢出去。
     private final Map<String, Long> topics = new HashMap<>();
+    // 新的主题集合, set集合，即第一次要发送的主题
     private final Set<String> newTopics = new HashSet<>();
     private final Logger log;
     private final Time time;
