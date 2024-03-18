@@ -43,7 +43,7 @@ task bootstrapWrapper() {
         // github.com servers deprecated TLSv1/TLSv1.1 support some time ago, so older versions
         // of curl (built against OpenSSL library that doesn't support TLSv1.2) would fail to
         // fetch the jar.
-        def wrapperBaseUrl = "https://raw.githubusercontent.com/gradle/gradle/v$fullVersion/gradle/wrapper"
+        def wrapperBaseUrl = "https://github.com/gradle/gradle/v$fullVersion/gradle/wrapper"
         def wrapperJarUrl = wrapperBaseUrl + "/gradle-wrapper.jar"
 
         def bootstrapString = """

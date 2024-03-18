@@ -14,6 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#判断参数有没有，参数个数小于1就提示用法；
+#获取脚本当前路径赋值给变量 base_dir；
+#判断日志参数 KAFKA_LOG4J_OPTS 是否为空，为空就给它一个值；
+#判断堆参数 KAFKA_HEAP_OPTS是否为空，为空就默认给它赋值为 "-Xmx1G -Xms1G"，默认的堆空间指定为1G；
+#判断启动命令中第一个参数是否为 -daemon，如果是就以守护进程启动（其实不是，是赋给另一个变量 EXTRA_ARGS）；
+#执行命令。
 if [ $# -lt 1 ];
 then
 	echo "USAGE: $0 [-daemon] server.properties [--override property=value]*"
@@ -28,7 +34,7 @@ fi
 if [ "x$KAFKA_HEAP_OPTS" = "x" ]; then
     export KAFKA_HEAP_OPTS="-Xmx1G -Xms1G"
 fi
-
+fetchHighWatermarkMetadata
 EXTRA_ARGS=${EXTRA_ARGS-'-name kafkaServer -loggc'}
 
 COMMAND=$1

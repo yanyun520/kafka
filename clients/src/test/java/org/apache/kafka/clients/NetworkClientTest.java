@@ -575,13 +575,13 @@ public class NetworkClientTest {
                     .setApiKey(apiKey.id)
                     .setMinVersion((short) 0)
                     .setMaxVersion(maxVersion));
-            } else {
-                versionList.add(new ApiVersionsResponseKey()
-                    .setApiKey(apiKey.id)
-                    .setMinVersion(apiKey.oldestVersion())
-                    .setMaxVersion(apiKey.latestVersion()));
-            }
-        }
+    } else {
+        versionList.add(new ApiVersionsResponseKey()
+                .setApiKey(apiKey.id)
+                .setMinVersion(apiKey.oldestVersion())
+                .setMaxVersion(apiKey.latestVersion()));
+    }
+}
         return new ApiVersionsResponse(new ApiVersionsResponseData()
             .setErrorCode(Errors.NONE.code())
             .setThrottleTimeMs(0)

@@ -51,7 +51,7 @@ public class ClusterResourceListeners {
     }
 
     /**
-     * Send the updated cluster metadata to all {@link ClusterResourceListener}.
+     * ySend the updated cluster metadata to all {@link ClusterResourceListener}.
      * @param cluster Cluster metadata
      */
     public void onUpdate(ClusterResource cluster) {

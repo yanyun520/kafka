@@ -83,6 +83,25 @@ import java.util.concurrent.atomic.AtomicReference;
  * various getters. These are reset by each call to <code>poll()</code>.
  *
  * This class is not thread safe!
+ *
+ *
+ *
+ * nioSelector： 在 Java NIO 中用来监听网络I/O事件。
+ * channels： 用来进行管理客户端到各个Node节点的网络连接，Map 集合类型 <Node节点id, KafkaChannel>
+ * completedSends： 已经发送完成的请求对象 Send 集合，List 集合类型。
+ * completedReceives： 已经接收完毕的网络请求集合，LinkedHashMap 集合类型 <ChannelId, NetworkReceive>，其中 value 都是已经接收完毕的 NetworkReceive 类对象。
+ * immediatelyConnectedKeys： 立即连接key集合。
+ * closingChannels： 关闭连接的 channel 集合。
+ * disconnected： 断开连接的集合。Map 集合类型 <ChannelId, ChannelState>，value 是 KafkaChannel 的状态，可以在使用的时候可以通过这个 ChannelState 状态来判断处理逻辑。
+ * connected： 成功连接的集合，List 集合类型，存储成功请求的 ChannelId。
+ * failedSends： 发送失败的请求集合，List 集合类型， 存储失败请求的 ChannelId。
+ * channelBuilder： 用来构建 KafkaChannel 的工具类。
+ * maxReceiveSize： 最大可以接收的数据量大小。
+ * idleExpiryManager： 空闲超时到期连接管理器。
+ * memoryPool： 用来管理 ByteBuffer 的内存池，分配以及回收。
+ *
+ *
+ *
  */
 public class Selector implements Selectable, AutoCloseable {
 
@@ -102,12 +121,18 @@ public class Selector implements Selectable, AutoCloseable {
     }
 
     private final Logger log;
+    // 在 Java NIO 中用来监听网络I/O事件
     private final java.nio.channels.Selector nioSelector;
+    // channels 管理
     private final Map<String, KafkaChannel> channels;
+
     private final Set<KafkaChannel> explicitlyMutedChannels;
     private boolean outOfMemory;
+    // 发送完成的Send集合
     private final List<Send> completedSends;
+    // 已经接收完毕的请求集合
     private final LinkedHashMap<String, NetworkReceive> completedReceives;
+    // 立即连接的集合
     private final Set<SelectionKey> immediatelyConnectedKeys;
     private final Map<String, KafkaChannel> closingChannels;
     private Set<SelectionKey> keysWithBufferedRead;
@@ -1413,6 +1438,10 @@ public class Selector implements Selectable, AutoCloseable {
     }
 
     // helper class for tracking least recently used connections to enable idle connection closing
+
+    /**
+     * 为什么会有这个管理器，大家都知道对于 TCP 大量连接或者重连是会对 Kafka 造成性能影响的，而 Kafka 客户端又不能同时连接过多的节点。因此设计这样一个 LRU 算法，每隔9分钟就删除一个空闲过期的连接，以保证已有连接的有效。
+     */
     private static class IdleExpiryManager {
         private final Map<String, Long> lruConnections;
         private final long connectionsMaxIdleNanos;
