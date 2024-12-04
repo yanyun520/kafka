@@ -327,78 +327,117 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                   KafkaClient kafkaClient,
                   ProducerInterceptors<K, V> interceptors,
                   Time time) {
+        // 创建 ProducerConfig 对象
         ProducerConfig config = new ProducerConfig(ProducerConfig.appendSerializerToConfig(configs, keySerializer,
                 valueSerializer));
         try {
+            // 获取用户提供的配置
             Map<String, Object> userProvidedConfigs = config.originals();
+            // 保存 ProducerConfig 对象
             this.producerConfig = config;
+            // 保存 Time 对象
             this.time = time;
 
+            // 获取事务 ID
             String transactionalId = (String) userProvidedConfigs.get(ProducerConfig.TRANSACTIONAL_ID_CONFIG);
 
+            // 获取客户端 ID
             this.clientId = config.getString(ProducerConfig.CLIENT_ID_CONFIG);
 
+            // 创建 LogContext 对象
             LogContext logContext;
             if (transactionalId == null)
+                // 如果事务 ID 为空，则使用客户端 ID 创建 LogContext
                 logContext = new LogContext(String.format("[Producer clientId=%s] ", clientId));
             else
+                // 如果事务 ID 不为空，则使用客户端 ID 和事务 ID 创建 LogContext
                 logContext = new LogContext(String.format("[Producer clientId=%s, transactionalId=%s] ", clientId, transactionalId));
+            // 创建 Logger 对象
             log = logContext.logger(KafkaProducer.class);
+            // 记录日志，表示 Kafka 生产者正在启动
             log.trace("Starting the Kafka producer");
 
+            // 创建 MetricConfig 对象
             Map<String, String> metricTags = Collections.singletonMap("client-id", clientId);
             MetricConfig metricConfig = new MetricConfig().samples(config.getInt(ProducerConfig.METRICS_NUM_SAMPLES_CONFIG))
                     .timeWindow(config.getLong(ProducerConfig.METRICS_SAMPLE_WINDOW_MS_CONFIG), TimeUnit.MILLISECONDS)
                     .recordLevel(Sensor.RecordingLevel.forName(config.getString(ProducerConfig.METRICS_RECORDING_LEVEL_CONFIG)))
                     .tags(metricTags);
+            // 获取 MetricsReporter 列表
             List<MetricsReporter> reporters = config.getConfiguredInstances(ProducerConfig.METRIC_REPORTER_CLASSES_CONFIG,
                     MetricsReporter.class,
                     Collections.singletonMap(ProducerConfig.CLIENT_ID_CONFIG, clientId));
+            // 创建 JmxReporter 对象并配置
             JmxReporter jmxReporter = new JmxReporter();
             jmxReporter.configure(userProvidedConfigs);
+            // 将 JmxReporter 添加到 MetricsReporter 列表中
             reporters.add(jmxReporter);
+            // 创建 MetricsContext 对象
             MetricsContext metricsContext = new KafkaMetricsContext(JMX_PREFIX,
                     config.originalsWithPrefix(CommonClientConfigs.METRICS_CONTEXT_PREFIX));
+            // 创建 Metrics 对象
             this.metrics = new Metrics(metricConfig, reporters, time, metricsContext);
+            // 获取分区器对象
             this.partitioner = config.getConfiguredInstance(ProducerConfig.PARTITIONER_CLASS_CONFIG, Partitioner.class);
+            // 获取重试退避时间
             long retryBackoffMs = config.getLong(ProducerConfig.RETRY_BACKOFF_MS_CONFIG);
+            // 如果 keySerializer 为空，则使用配置中的 keySerializer
             if (keySerializer == null) {
                 this.keySerializer = config.getConfiguredInstance(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
                                                                                          Serializer.class);
+                // 配置 keySerializer
                 this.keySerializer.configure(config.originals(Collections.singletonMap(ProducerConfig.CLIENT_ID_CONFIG, clientId)), true);
             } else {
+                // 忽略配置中的 keySerializer
                 config.ignore(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG);
+                // 使用传入的 keySerializer
                 this.keySerializer = keySerializer;
             }
+            // 如果 valueSerializer 为空，则使用配置中的 valueSerializer
             if (valueSerializer == null) {
                 this.valueSerializer = config.getConfiguredInstance(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
                                                                                            Serializer.class);
+                // 配置 valueSerializer
                 this.valueSerializer.configure(config.originals(Collections.singletonMap(ProducerConfig.CLIENT_ID_CONFIG, clientId)), false);
             } else {
+                // 忽略配置中的 valueSerializer
                 config.ignore(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG);
+                // 使用传入的 valueSerializer
                 this.valueSerializer = valueSerializer;
             }
 
-            // load interceptors and make sure they get clientId
+            // 加载拦截器并确保它们获得客户端 ID
             userProvidedConfigs.put(ProducerConfig.CLIENT_ID_CONFIG, clientId);
             ProducerConfig configWithClientId = new ProducerConfig(userProvidedConfigs, false);
+            // 获取拦截器列表
             List<ProducerInterceptor<K, V>> interceptorList = (List) configWithClientId.getConfiguredInstances(
                     ProducerConfig.INTERCEPTOR_CLASSES_CONFIG, ProducerInterceptor.class);
+            // 如果传入了 interceptors，则使用传入的 interceptors
             if (interceptors != null)
                 this.interceptors = interceptors;
             else
+                // 否则使用配置的 interceptors
                 this.interceptors = new ProducerInterceptors<>(interceptorList);
+            // 配置集群资源监听器
             ClusterResourceListeners clusterResourceListeners = configureClusterResourceListeners(keySerializer,
                     valueSerializer, interceptorList, reporters);
+            // 获取最大请求大小
             this.maxRequestSize = config.getInt(ProducerConfig.MAX_REQUEST_SIZE_CONFIG);
+            // 获取缓冲区内存大小
             this.totalMemorySize = config.getLong(ProducerConfig.BUFFER_MEMORY_CONFIG);
+            // 获取压缩类型
             this.compressionType = CompressionType.forName(config.getString(ProducerConfig.COMPRESSION_TYPE_CONFIG));
 
+            // 获取最大阻塞时间
             this.maxBlockTimeMs = config.getLong(ProducerConfig.MAX_BLOCK_MS_CONFIG);
+            // 配置交付超时
             int deliveryTimeoutMs = configureDeliveryTimeout(config, log);
 
+            // 初始化 ApiVersions 对象
             this.apiVersions = new ApiVersions();
+            // 配置事务状态
             this.transactionManager = configureTransactionState(config, logContext);
+            // 初始化 RecordAccumulator 对象
             this.accumulator = new RecordAccumulator(logContext,
                     config.getInt(ProducerConfig.BATCH_SIZE_CONFIG),
                     this.compressionType,
@@ -412,12 +451,15 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     transactionManager,
                     new BufferPool(this.totalMemorySize, config.getInt(ProducerConfig.BATCH_SIZE_CONFIG), metrics, time, PRODUCER_METRIC_GROUP_NAME));
 
+            // 解析和验证引导服务器地址
             List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(
                     config.getList(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG),
                     config.getString(ProducerConfig.CLIENT_DNS_LOOKUP_CONFIG));
+            // 如果传入了 metadata，则使用传入的 metadata
             if (metadata != null) {
                 this.metadata = metadata;
             } else {
+                // 否则创建新的 ProducerMetadata 对象并初始化
                 this.metadata = new ProducerMetadata(retryBackoffMs,
                         config.getLong(ProducerConfig.METADATA_MAX_AGE_CONFIG),
                         config.getLong(ProducerConfig.METADATA_MAX_IDLE_CONFIG),
@@ -426,31 +468,46 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                         Time.SYSTEM);
                 this.metadata.bootstrap(addresses);
             }
+            // 初始化错误传感器
             this.errors = this.metrics.sensor("errors");
-            // 初始化 Sender 发送线程类，并同时初始化NetworkClient
+            // 初始化 Sender 发送线程类，并同时初始化 NetworkClient
             this.sender = newSender(logContext, kafkaClient, this.metadata);
+            // 设置 IO 线程名称
             String ioThreadName = NETWORK_THREAD_PREFIX + " | " + clientId;
+            // 创建 KafkaThread 对象
             this.ioThread = new KafkaThread(ioThreadName, this.sender, true);
+            // 启动 IO 线程
             this.ioThread.start();
+            // 记录未使用的配置
             config.logUnused();
+            // 注册应用信息
             AppInfoParser.registerAppInfo(JMX_PREFIX, clientId, metrics, time.milliseconds());
+            // 记录日志，表示 Kafka 生产者已启动
             log.debug("Kafka producer started");
         } catch (Throwable t) {
-            // call close methods if internal objects are already constructed this is to prevent resource leak. see KAFKA-2121
+            // 如果内部对象已构造，则调用关闭方法以防止资源泄漏。参见 KAFKA-2121
             close(Duration.ofMillis(0), true);
-            // now propagate the exception
+            // 抛出异常
             throw new KafkaException("Failed to construct kafka producer", t);
         }
     }
 
     // visible for testing
     Sender newSender(LogContext logContext, KafkaClient kafkaClient, ProducerMetadata metadata) {
+        // 配置最大并发请求数
         int maxInflightRequests = configureInflightRequests(producerConfig);
+        // 配置请求超时时间
         int requestTimeoutMs = producerConfig.getInt(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG);
+        // 创建ChannelBuilder对象
         ChannelBuilder channelBuilder = ClientUtils.createChannelBuilder(producerConfig, time, logContext);
+        // 创建生产者指标对象
         ProducerMetrics metricsRegistry = new ProducerMetrics(this.metrics);
+        // 创建节流时间传感器
         Sensor throttleTimeSensor = Sender.throttleTimeSensor(metricsRegistry.senderMetrics);
+
+        // 创建KafkaClient对象
         KafkaClient client = kafkaClient != null ? kafkaClient : new NetworkClient(
+                // 创建选择器对象
                 new Selector(producerConfig.getLong(ProducerConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG),
                         this.metrics, time, "producer", channelBuilder, logContext),
                 metadata,
@@ -469,7 +526,11 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 apiVersions,
                 throttleTimeSensor,
                 logContext);
+
+        // 配置应答级别
         short acks = configureAcks(producerConfig, log);
+
+        // 创建并返回Sender对象
         return new Sender(logContext,
                 client,
                 metadata,
@@ -491,25 +552,35 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     }
 
     private static int configureDeliveryTimeout(ProducerConfig config, Logger log) {
+        // 获取配置中的deliveryTimeoutMs
         int deliveryTimeoutMs = config.getInt(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG);
+        // 获取lingerMs
         int lingerMs = lingerMs(config);
+        // 获取requestTimeoutMs
         int requestTimeoutMs = config.getInt(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG);
+        // 计算lingerMs和requestTimeoutMs之和的最小值，防止溢出
         int lingerAndRequestTimeoutMs = (int) Math.min((long) lingerMs + requestTimeoutMs, Integer.MAX_VALUE);
 
+        // 如果deliveryTimeoutMs小于lingerMs和requestTimeoutMs之和
         if (deliveryTimeoutMs < lingerAndRequestTimeoutMs) {
+            // 如果配置中明确设置了deliveryTimeoutMs
             if (config.originals().containsKey(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG)) {
+                // 如果用户显式设置了不一致的值，则抛出异常
                 // throw an exception if the user explicitly set an inconsistent value
                 throw new ConfigException(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG
                     + " should be equal to or larger than " + ProducerConfig.LINGER_MS_CONFIG
                     + " + " + ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG);
             } else {
+                // 否则，为了向后兼容，将deliveryTimeoutMs的默认值覆盖为lingerMs和requestTimeoutMs之和
                 // override deliveryTimeoutMs default value to lingerMs + requestTimeoutMs for backward compatibility
                 deliveryTimeoutMs = lingerAndRequestTimeoutMs;
+                // 打印警告日志
                 log.warn("{} should be equal to or larger than {} + {}. Setting it to {}.",
                     ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, ProducerConfig.LINGER_MS_CONFIG,
                     ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, deliveryTimeoutMs);
             }
         }
+        // 返回deliveryTimeoutMs
         return deliveryTimeoutMs;
     }
 
@@ -518,17 +589,28 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
         TransactionManager transactionManager = null;
 
+        // 判断用户是否配置了幂等性
         final boolean userConfiguredIdempotence = config.originals().containsKey(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG);
+        // 判断用户是否配置了事务
         final boolean userConfiguredTransactions = config.originals().containsKey(ProducerConfig.TRANSACTIONAL_ID_CONFIG);
+
+        // 如果用户配置了事务但没有配置幂等性，则打印日志信息
         if (userConfiguredTransactions && !userConfiguredIdempotence)
             log.info("Overriding the default {} to true since {} is specified.", ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG,
                     ProducerConfig.TRANSACTIONAL_ID_CONFIG);
 
+        // 如果配置了幂等性
         if (config.idempotenceEnabled()) {
+            // 获取事务ID
             final String transactionalId = config.getString(ProducerConfig.TRANSACTIONAL_ID_CONFIG);
+            // 获取事务超时时间
             final int transactionTimeoutMs = config.getInt(ProducerConfig.TRANSACTION_TIMEOUT_CONFIG);
+            // 获取重试间隔时间
             final long retryBackoffMs = config.getLong(ProducerConfig.RETRY_BACKOFF_MS_CONFIG);
+            // 获取是否自动降级事务提交
             final boolean autoDowngradeTxnCommit = config.getBoolean(ProducerConfig.AUTO_DOWNGRADE_TXN_COMMIT);
+
+            // 创建事务管理器
             transactionManager = new TransactionManager(
                 logContext,
                 transactionalId,
@@ -537,8 +619,10 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 apiVersions,
                 autoDowngradeTxnCommit);
 
+            // 判断是否是事务生产者
             if (transactionManager.isTransactional())
                 log.info("Instantiated a transactional producer.");
+            // 判断是否是幂等生产者
             else
                 log.info("Instantiated an idempotent producer.");
         }

@@ -44,31 +44,39 @@ public class ConnectSchema implements Schema {
     private static final Map<Class<?>, Type> JAVA_CLASS_SCHEMA_TYPES = new HashMap<>();
 
     static {
-        SCHEMA_TYPE_CLASSES.put(Type.INT8, Collections.singletonList((Class) Byte.class));
-        SCHEMA_TYPE_CLASSES.put(Type.INT16, Collections.singletonList((Class) Short.class));
-        SCHEMA_TYPE_CLASSES.put(Type.INT32, Collections.singletonList((Class) Integer.class));
-        SCHEMA_TYPE_CLASSES.put(Type.INT64, Collections.singletonList((Class) Long.class));
-        SCHEMA_TYPE_CLASSES.put(Type.FLOAT32, Collections.singletonList((Class) Float.class));
-        SCHEMA_TYPE_CLASSES.put(Type.FLOAT64, Collections.singletonList((Class) Double.class));
-        SCHEMA_TYPE_CLASSES.put(Type.BOOLEAN, Collections.singletonList((Class) Boolean.class));
-        SCHEMA_TYPE_CLASSES.put(Type.STRING, Collections.singletonList((Class) String.class));
+        // 映射基本数据类型到Java类
+        SCHEMA_TYPE_CLASSES.put(Type.INT8, Collections.singletonList((Class) Byte.class)); // 将Type.INT8映射到Byte类
+        SCHEMA_TYPE_CLASSES.put(Type.INT16, Collections.singletonList((Class) Short.class)); // 将Type.INT16映射到Short类
+        SCHEMA_TYPE_CLASSES.put(Type.INT32, Collections.singletonList((Class) Integer.class)); // 将Type.INT32映射到Integer类
+        SCHEMA_TYPE_CLASSES.put(Type.INT64, Collections.singletonList((Class) Long.class)); // 将Type.INT64映射到Long类
+        SCHEMA_TYPE_CLASSES.put(Type.FLOAT32, Collections.singletonList((Class) Float.class)); // 将Type.FLOAT32映射到Float类
+        SCHEMA_TYPE_CLASSES.put(Type.FLOAT64, Collections.singletonList((Class) Double.class)); // 将Type.FLOAT64映射到Double类
+        SCHEMA_TYPE_CLASSES.put(Type.BOOLEAN, Collections.singletonList((Class) Boolean.class)); // 将Type.BOOLEAN映射到Boolean类
+        SCHEMA_TYPE_CLASSES.put(Type.STRING, Collections.singletonList((Class) String.class)); // 将Type.STRING映射到String类
+
+        // Bytes类型的特殊处理
         // Bytes are special and have 2 representations. byte[] causes problems because it doesn't handle equals() and
         // hashCode() like we want objects to, so we support both byte[] and ByteBuffer. Using plain byte[] can cause
         // those methods to fail, so ByteBuffers are recommended
-        SCHEMA_TYPE_CLASSES.put(Type.BYTES, Arrays.asList((Class) byte[].class, (Class) ByteBuffer.class));
-        SCHEMA_TYPE_CLASSES.put(Type.ARRAY, Collections.singletonList((Class) List.class));
-        SCHEMA_TYPE_CLASSES.put(Type.MAP, Collections.singletonList((Class) Map.class));
-        SCHEMA_TYPE_CLASSES.put(Type.STRUCT, Collections.singletonList((Class) Struct.class));
+        SCHEMA_TYPE_CLASSES.put(Type.BYTES, Arrays.asList((Class) byte[].class, (Class) ByteBuffer.class)); // 将Type.BYTES映射到byte[]和ByteBuffer类
 
+        SCHEMA_TYPE_CLASSES.put(Type.ARRAY, Collections.singletonList((Class) List.class)); // 将Type.ARRAY映射到List类
+        SCHEMA_TYPE_CLASSES.put(Type.MAP, Collections.singletonList((Class) Map.class)); // 将Type.MAP映射到Map类
+        SCHEMA_TYPE_CLASSES.put(Type.STRUCT, Collections.singletonList((Class) Struct.class)); // 将Type.STRUCT映射到Struct类
+
+        // 将映射关系反向存储
         for (Map.Entry<Type, List<Class>> schemaClasses : SCHEMA_TYPE_CLASSES.entrySet()) {
             for (Class<?> schemaClass : schemaClasses.getValue())
                 JAVA_CLASS_SCHEMA_TYPES.put(schemaClass, schemaClasses.getKey());
         }
 
-        LOGICAL_TYPE_CLASSES.put(Decimal.LOGICAL_NAME, Collections.singletonList((Class) BigDecimal.class));
-        LOGICAL_TYPE_CLASSES.put(Date.LOGICAL_NAME, Collections.singletonList((Class) java.util.Date.class));
-        LOGICAL_TYPE_CLASSES.put(Time.LOGICAL_NAME, Collections.singletonList((Class) java.util.Date.class));
-        LOGICAL_TYPE_CLASSES.put(Timestamp.LOGICAL_NAME, Collections.singletonList((Class) java.util.Date.class));
+        // 映射逻辑数据类型到Java类
+        LOGICAL_TYPE_CLASSES.put(Decimal.LOGICAL_NAME, Collections.singletonList((Class) BigDecimal.class)); // 将Decimal逻辑类型映射到BigDecimal类
+        LOGICAL_TYPE_CLASSES.put(Date.LOGICAL_NAME, Collections.singletonList((Class) java.util.Date.class)); // 将Date逻辑类型映射到java.util.Date类
+        LOGICAL_TYPE_CLASSES.put(Time.LOGICAL_NAME, Collections.singletonList((Class) java.util.Date.class)); // 将Time逻辑类型映射到java.util.Date类
+        LOGICAL_TYPE_CLASSES.put(Timestamp.LOGICAL_NAME, Collections.singletonList((Class) java.util.Date.class)); // 将Timestamp逻辑类型映射到java.util.Date类
+
+        // 逻辑类型不需要放入JAVA_CLASS_SCHEMA_TYPES中
         // We don't need to put these into JAVA_CLASS_SCHEMA_TYPES since that's only used to determine schemas for
         // schemaless data and logical types will have ambiguous schemas (e.g. many of them use the same Java class) so
         // they should not be used without schemas.
@@ -215,18 +223,26 @@ public class ConnectSchema implements Schema {
 
     public static void validateValue(String name, Schema schema, Object value) {
         if (value == null) {
+            // 如果值为null
             if (!schema.isOptional())
+                // 如果schema不是可选的
                 throw new DataException("Invalid value: null used for required field: \"" + name
                         + "\", schema type: " + schema.type());
+            // 返回，结束函数执行
             return;
         }
 
+        // 获取schema期望的类列表
         List<Class> expectedClasses = expectedClassesFor(schema);
         boolean foundMatch = false;
+        // 如果期望的类只有一个
         if (expectedClasses.size() == 1) {
+            // 判断值是否匹配期望的类
             foundMatch = expectedClasses.get(0).isInstance(value);
         } else {
+            // 遍历所有期望的类
             for (Class<?> expectedClass : expectedClasses) {
+                // 判断值是否匹配某个期望的类
                 if (expectedClass.isInstance(value)) {
                     foundMatch = true;
                     break;
@@ -234,32 +250,44 @@ public class ConnectSchema implements Schema {
             }
         }
 
+        // 如果没有找到匹配的类
         if (!foundMatch) {
+            // 构建异常信息
             StringBuilder exceptionMessage = new StringBuilder("Invalid Java object for schema");
             if (schema.name() != null) {
+                // 如果schema有名称，则添加到异常信息中
                 exceptionMessage.append(" \"").append(schema.name()).append("\"");
             }
             exceptionMessage.append(" with type ").append(schema.type()).append(": ").append(value.getClass());
             if (name != null) {
+                // 如果name不为null，则添加到异常信息中
                 exceptionMessage.append(" for field: \"").append(name).append("\"");
             }
             throw new DataException(exceptionMessage.toString());
         }
 
+        // 根据schema的类型进行不同的处理
         switch (schema.type()) {
             case STRUCT:
+                // 如果schema类型为STRUCT
                 Struct struct = (Struct) value;
                 if (!struct.schema().equals(schema))
+                    // 如果struct的schema与给定的schema不匹配
                     throw new DataException("Struct schemas do not match.");
+                // 验证struct
                 struct.validate();
                 break;
             case ARRAY:
+                // 如果schema类型为ARRAY
                 List<?> array = (List<?>) value;
+                // 遍历数组中的每个元素进行验证
                 for (Object entry : array)
                     validateValue(schema.valueSchema(), entry);
                 break;
             case MAP:
+                // 如果schema类型为MAP
                 Map<?, ?> map = (Map<?, ?>) value;
+                // 遍历map中的每个键值对进行验证
                 for (Map.Entry<?, ?> entry : map.entrySet()) {
                     validateValue(schema.keySchema(), entry.getKey());
                     validateValue(schema.valueSchema(), entry.getValue());

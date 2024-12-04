@@ -106,47 +106,69 @@ public class AclAuthorizerBenchmark {
     }
 
     private TreeMap<ResourcePattern, VersionedAcls> prepareAclCache() {
+        // 创建一个空的HashMap来存储资源模式和对应的AclEntry集合
         Map<ResourcePattern, Set<AclEntry>> aclEntries = new HashMap<>();
+
+        // 遍历所有资源ID
         for (int resourceId = 0; resourceId < resourceCount; resourceId++) {
+            // 根据资源ID创建资源模式
             ResourcePattern resource = new ResourcePattern(
                 (resourceId % 10 == 0) ? ResourceType.GROUP : ResourceType.TOPIC,
                 resourceNamePrefix + resourceId,
                 (resourceId % 5 == 0) ? PatternType.PREFIXED : PatternType.LITERAL);
 
+            // 如果aclEntries中不存在该资源模式，则将其添加到aclEntries中
             Set<AclEntry> entries = aclEntries.computeIfAbsent(resource, k -> new HashSet<>());
 
+            // 遍历所有AclID
             for (int aclId = 0; aclId < aclCount; aclId++) {
+                // 创建一个AccessControlEntry对象
                 AccessControlEntry ace = new AccessControlEntry(principal.toString() + aclId,
                     "*", AclOperation.READ, AclPermissionType.ALLOW);
+                // 将AclEntry添加到entries集合中
                 entries.add(new AclEntry(ace));
             }
         }
 
+        // 创建一个资源模式，表示以resourceNamePrefix为前缀的所有TOPIC资源
         ResourcePattern resourcePrefix = new ResourcePattern(ResourceType.TOPIC, resourceNamePrefix,
             PatternType.PREFIXED);
+        // 如果aclEntries中不存在该资源模式，则将其添加到aclEntries中
         Set<AclEntry> entriesPrefix = aclEntries.computeIfAbsent(resourcePrefix, k -> new HashSet<>());
+        // 遍历所有主机ID
         for (int hostId = 0; hostId < hostPreCount; hostId++) {
+            // 创建一个AccessControlEntry对象
             AccessControlEntry ace = new AccessControlEntry(principal.toString(), "127.0.0." + hostId,
                 AclOperation.READ, AclPermissionType.ALLOW);
+            // 将AclEntry添加到entriesPrefix集合中
             entriesPrefix.add(new AclEntry(ace));
         }
 
+        // 创建一个资源模式，表示所有TOPIC资源
         ResourcePattern resourceWildcard = new ResourcePattern(ResourceType.TOPIC, ResourcePattern.WILDCARD_RESOURCE,
             PatternType.LITERAL);
+        // 如果aclEntries中不存在该资源模式，则将其添加到aclEntries中
         Set<AclEntry> entriesWildcard = aclEntries.computeIfAbsent(resourceWildcard, k -> new HashSet<>());
+        // 获取通配符Acl的动态条目数
         // get dynamic entries number for wildcard acl
         for (int hostId = 0; hostId < resourceCount / 10; hostId++) {
+            // 创建一个AccessControlEntry对象
             AccessControlEntry ace = new AccessControlEntry(principal.toString(), "127.0.0." + hostId,
                 AclOperation.READ, AclPermissionType.ALLOW);
+            // 将AclEntry添加到entriesWildcard集合中
             entriesWildcard.add(new AclEntry(ace));
         }
 
+        // 创建一个TreeMap来存储资源模式和对应的VersionedAcls
         TreeMap<ResourcePattern, VersionedAcls> aclCache = new TreeMap<>(new AclAuthorizer.ResourceOrdering());
+        // 遍历aclEntries中的每个条目
         for (Map.Entry<ResourcePattern, Set<AclEntry>> entry : aclEntries.entrySet()) {
+            // 更新aclCache中对应资源模式的VersionedAcls
             aclCache = aclCache.updated(entry.getKey(),
                 new VersionedAcls(JavaConverters.asScalaSetConverter(entry.getValue()).asScala().toSet(), 1));
         }
 
+        // 返回aclCache
         return aclCache;
     }
 

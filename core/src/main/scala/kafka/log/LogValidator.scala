@@ -132,7 +132,9 @@ private[log] object LogValidator extends Logging {
                             origin: AppendOrigin,
                             toMagic: Byte,
                             brokerTopicStats: BrokerTopicStats): Unit = {
-    // batch magic byte should have the same magic as the first batch
+
+   // 验证批次的魔术字节是否与第一个批次的魔术字节相同
+  // batch magic byte should have the same magic as the first batch
     if (firstBatch.magic() != batch.magic()) {
       brokerTopicStats.allTopicsStats.invalidMagicNumberRecordsPerSec.mark()
       throw new InvalidRecordException(s"Batch magic ${batch.magic()} is not the same as the first batch'es magic byte ${firstBatch.magic()} in topic partition $topicPartition.")
@@ -145,6 +147,7 @@ private[log] object LogValidator extends Logging {
           brokerTopicStats.allTopicsStats.invalidOffsetOrSequenceRecordsPerSec.mark()
           throw new InvalidRecordException(s"Batch has an invalid offset range: [${batch.baseOffset}, ${batch.lastOffset}] in topic partition $topicPartition.")
         }
+        // 验证v2及以上版本的消息始终具有非空计数
 
         // v2 and above messages always have a non-null count
         val count = batch.countOrNull
@@ -172,10 +175,13 @@ private[log] object LogValidator extends Logging {
       }
     }
 
+      // 如果批次是事务性的，并且目标魔术版本低于v2，则抛出异常
     if (batch.isTransactional && toMagic < RecordBatch.MAGIC_VALUE_V2)
       throw new UnsupportedForMessageFormatException(s"Transactional records cannot be used with magic version $toMagic")
 
-    if (batch.hasProducerId && toMagic < RecordBatch.MAGIC_VALUE_V2)
+
+    // 如果批次具有生产者ID，并且目标魔术版本低于v2，则抛出异常
+ (batch.hasProducerId && toMagic < RecordBatch.MAGIC_VALUE_V2)
       throw new UnsupportedForMessageFormatException(s"Idempotent records cannot be used with magic version $toMagic")
   }
 
@@ -219,33 +225,50 @@ private[log] object LogValidator extends Logging {
                                                    partitionLeaderEpoch: Int,
                                                    origin: AppendOrigin,
                                                    brokerTopicStats: BrokerTopicStats): ValidationAndOffsetAssignResult = {
+    // 记录开始时间
     val startNanos = time.nanoseconds
+
+    // 估算转换后的大小（字节）
     val sizeInBytesAfterConversion = AbstractRecords.estimateSizeInBytes(toMagicValue, offsetCounter.value,
       CompressionType.NONE, records.records)
 
+    // 获取生产者的ID、纪元、序列号和是否事务性
     val (producerId, producerEpoch, sequence, isTransactional) = {
+      // 获取第一个批次
       val first = records.batches.asScala.head
       (first.producerId, first.producerEpoch, first.baseSequence, first.isTransactional)
     }
 
+    // 分配新的缓冲区
     val newBuffer = ByteBuffer.allocate(sizeInBytesAfterConversion)
+
+    // 创建MemoryRecords构建器
     val builder = MemoryRecords.builder(newBuffer, toMagicValue, CompressionType.NONE, timestampType,
       offsetCounter.value, now, producerId, producerEpoch, sequence, isTransactional, partitionLeaderEpoch)
 
+    // 获取第一个批次并进行验证
     val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)
 
+    // 遍历所有批次
     records.batches.forEach { batch =>
+      // 验证批次
       validateBatch(topicPartition, firstBatch, batch, origin, toMagicValue, brokerTopicStats)
 
+      // 初始化记录错误缓冲区
       val recordErrors = new ArrayBuffer[ApiRecordError](0)
+
+      // 遍历批次中的每条记录
       for ((record, batchIndex) <- batch.asScala.view.zipWithIndex) {
+        // 验证记录
         validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,
           timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)
+        // 如果记录验证通过，则添加到构建器中
         // we fail the batch if any record fails, so we stop appending if any record fails
         if (recordErrors.isEmpty)
           builder.appendWithOffset(offsetCounter.getAndIncrement(), record)
       }
 
+      // 处理记录错误
       processRecordErrors(recordErrors)
     }
 
@@ -273,26 +296,37 @@ private[log] object LogValidator extends Logging {
                                          origin: AppendOrigin,
                                          magic: Byte,
                                          brokerTopicStats: BrokerTopicStats): ValidationAndOffsetAssignResult = {
+    // 初始化最大时间戳和对应偏移量
     var maxTimestamp = RecordBatch.NO_TIMESTAMP
     var offsetOfMaxTimestamp = -1L
     val initialOffset = offsetCounter.value
 
+    // 获取第一个批次并验证没有更多的批次      // 遍历批次内的所有记录
+
     val firstBatch = getFirstBatchAndMaybeValidateNoMoreBatches(records, NoCompressionCodec)
 
+    // 遍历所有批次
     records.batches.forEach { batch =>
+      // 验证批次
       validateBatch(topicPartition, firstBatch, batch, origin, magic, brokerTopicStats)
 
+      // 初始化批次内最大时间戳和对应偏移量
       var maxBatchTimestamp = RecordBatch.NO_TIMESTAMP
       var offsetOfMaxBatchTimestamp = -1L
 
+      // 初始化记录错误列表
       val recordErrors = new ArrayBuffer[ApiRecordError](0)
+      // 这是一个热点路径，我们希望避免任何不必要的分配
       // this is a hot path and we want to avoid any unnecessary allocations.
       var batchIndex = 0
       batch.forEach { record =>
+        // 验证记录
         validateRecord(batch, topicPartition, record, batchIndex, now, timestampType,
           timestampDiffMaxMs, compactedTopic, brokerTopicStats).foreach(recordError => recordErrors += recordError)
 
+        // 更新偏移量
         val offset = offsetCounter.getAndIncrement()
+        // 更新批次内最大时间戳和对应偏移量
         if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && record.timestamp > maxBatchTimestamp) {
           maxBatchTimestamp = record.timestamp
           offsetOfMaxBatchTimestamp = offset
@@ -300,18 +334,23 @@ private[log] object LogValidator extends Logging {
         batchIndex += 1
       }
 
+      // 处理记录错误
       processRecordErrors(recordErrors)
 
+      // 更新全局最大时间戳和对应偏移量
       if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && maxBatchTimestamp > maxTimestamp) {
         maxTimestamp = maxBatchTimestamp
         offsetOfMaxTimestamp = offsetOfMaxBatchTimestamp
       }
 
+      // 设置批次最后偏移量
       batch.setLastOffset(offsetCounter.value - 1)
 
+      // 设置批次分区领导纪元
       if (batch.magic >= RecordBatch.MAGIC_VALUE_V2)
         batch.setPartitionLeaderEpoch(partitionLeaderEpoch)
 
+      // 设置批次最大时间戳
       if (batch.magic > RecordBatch.MAGIC_VALUE_V0) {
         if (timestampType == TimestampType.LOG_APPEND_TIME)
           batch.setMaxTimestamp(TimestampType.LOG_APPEND_TIME, now)
@@ -320,6 +359,7 @@ private[log] object LogValidator extends Logging {
       }
     }
 
+    // 如果时间戳类型为日志追加时间，则更新最大时间戳和对应偏移量
     if (timestampType == TimestampType.LOG_APPEND_TIME) {
       maxTimestamp = now
       if (magic >= RecordBatch.MAGIC_VALUE_V2)
@@ -328,6 +368,7 @@ private[log] object LogValidator extends Logging {
         offsetOfMaxTimestamp = initialOffset
     }
 
+    // 返回结果
     ValidationAndOffsetAssignResult(
       validatedRecords = records,
       maxTimestamp = maxTimestamp,

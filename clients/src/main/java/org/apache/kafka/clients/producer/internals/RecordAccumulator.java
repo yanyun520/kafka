@@ -186,12 +186,16 @@ public final class RecordAccumulator {
                                      long maxTimeToBlock,
                                      boolean abortOnNewBatch,
                                      long nowMs) throws InterruptedException {
+        // 记录追加线程数量，以确保在abortIncompleteBatches()中不会错过批次
         // We keep track of the number of appending thread to make sure we do not miss batches in
         // abortIncompleteBatches().
         appendsInProgress.incrementAndGet();
+
         ByteBuffer buffer = null;
         if (headers == null) headers = Record.EMPTY_HEADERS;
+
         try {
+            // 检查是否有正在进行的批次
             // check if we have an in-progress batch
             Deque<ProducerBatch> dq = getOrCreateDeque(tp);
             synchronized (dq) {
@@ -202,8 +206,10 @@ public final class RecordAccumulator {
                     return appendResult;
             }
 
+            // 没有正在进行的记录批次，尝试分配新的批次
             // we don't have an in-progress record batch try to allocate a new batch
             if (abortOnNewBatch) {
+                // 返回一个结果，将导致再次调用append
                 // Return a result that will cause another call to append.
                 return new RecordAppendResult(null, false, false, true);
             }
@@ -213,15 +219,18 @@ public final class RecordAccumulator {
             log.trace("Allocating a new {} byte message buffer for topic {} partition {} with remaining timeout {}ms", size, tp.topic(), tp.partition(), maxTimeToBlock);
             buffer = free.allocate(size, maxTimeToBlock);
 
+            // 更新当前时间，以防缓冲区分配阻塞
             // Update the current time in case the buffer allocation blocked above.
             nowMs = time.milliseconds();
             synchronized (dq) {
+                // 再次检查生产者是否已关闭
                 // Need to check if producer is closed again after grabbing the dequeue lock.
                 if (closed)
                     throw new KafkaException("Producer closed while send in progress");
 
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callback, dq, nowMs);
                 if (appendResult != null) {
+                    // 其他人已经找到了批次，返回我们等待的批次。希望这种情况不常发生...
                     // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
                     return appendResult;
                 }
@@ -234,13 +243,17 @@ public final class RecordAccumulator {
                 dq.addLast(batch);
                 incomplete.add(batch);
 
+                // 不要在finally块中释放此缓冲区，因为它正在记录批次中使用
                 // Don't deallocate this buffer in the finally block as it's being used in the record batch
                 buffer = null;
                 return new RecordAppendResult(future, dq.size() > 1 || batch.isFull(), true, false);
             }
         } finally {
+            // 释放缓冲区
             if (buffer != null)
                 free.deallocate(buffer);
+            // 减少追加线程计数
+            // appendsInProgress.decrementAndGet();
             appendsInProgress.decrementAndGet();
         }
     }
@@ -445,10 +458,13 @@ public final class RecordAccumulator {
         long nextReadyCheckDelayMs = Long.MAX_VALUE;
         Set<String> unknownLeaderTopics = new HashSet<>();
 
+        // 判断是否有待处理的任务
         boolean exhausted = this.free.queued() > 0;
         for (Map.Entry<TopicPartition, Deque<ProducerBatch>> entry : this.batches.entrySet()) {
             Deque<ProducerBatch> deque = entry.getValue();
             synchronized (deque) {
+                // 当生产到大量分区时，此路径很热，并且双端队列经常为空。
+                // 我们首先检查是否存在批次，以避免尽可能地进行更昂贵的检查。
                 // When producing to a large number of partitions, this path is hot and deques are often empty.
                 // We check whether a batch exists first to avoid the more expensive checks whenever possible.
                 ProducerBatch batch = deque.peekFirst();
@@ -456,6 +472,8 @@ public final class RecordAccumulator {
                     TopicPartition part = entry.getKey();
                     Node leader = cluster.leaderFor(part);
                     if (leader == null) {
+                        // 这是领导未知的分区，但有消息可以发送。
+                        // 请注意，当双端队列为空时，条目当前不会从批次中删除。
                         // This is a partition for which leader is not known, but messages are available to send.
                         // Note that entries are currently not removed from batches when deque is empty.
                         unknownLeaderTopics.add(part.topic());
@@ -470,6 +488,8 @@ public final class RecordAccumulator {
                             readyNodes.add(leader);
                         } else {
                             long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0);
+                            // 请注意，这会导致保守估计，因为不可发送的分区可能具有稍后将被发现具有可发送数据的领导者。
+                            // 但是，这已经足够好了，因为我们只是唤醒，然后为剩余时间再次睡眠。
                             // Note that this results in a conservative estimate since an un-sendable partition may have
                             // a leader that will later be found to have sendable data. However, this is good enough
                             // since we'll just wake up and then sleep again for the remaining time.
@@ -499,32 +519,45 @@ public final class RecordAccumulator {
     private boolean shouldStopDrainBatchesForPartition(ProducerBatch first, TopicPartition tp) {
         ProducerIdAndEpoch producerIdAndEpoch = null;
         if (transactionManager != null) {
+            // 检查是否允许向该分区发送消息
             if (!transactionManager.isSendToPartitionAllowed(tp))
                 return true;
 
+            // 获取生产者ID和纪元
             producerIdAndEpoch = transactionManager.producerIdAndEpoch();
+            // 检查生产者ID和纪元是否有效
             if (!producerIdAndEpoch.isValid())
+                // 如果无效，则停止发送批处理，直到刷新生产者ID
                 // we cannot send the batch until we have refreshed the producer id
                 return true;
 
+            // 如果第一个批处理没有序列号
             if (!first.hasSequence()) {
+                // 检查是否有正在飞行中的批处理，并且生产者ID和纪元已过时
                 if (transactionManager.hasInflightBatches(tp) && transactionManager.hasStaleProducerIdAndEpoch(tp)) {
+                    // 如果分区中有正在飞行中的批处理，并且生产者ID和纪元已过时，则停止发送新的批处理
                     // Don't drain any new batches while the partition has in-flight batches with a different epoch
                     // and/or producer ID. Otherwise, a batch with a new epoch and sequence number
                     // 0 could be written before earlier batches complete, which would cause out of sequence errors
                     return true;
                 }
 
+                // 检查是否有未解决的序列号
                 if (transactionManager.hasUnresolvedSequence(first.topicPartition))
+                    // 如果有未解决的序列号，则停止发送新的批处理
                     // Don't drain any new batches while the state of previous sequence numbers
                     // is unknown. The previous batches would be unknown if they were aborted
                     // on the client after being sent to the broker at least once.
                     return true;
             }
 
+            // 获取第一个正在飞行中的序列号
             int firstInFlightSequence = transactionManager.firstInFlightSequence(first.topicPartition);
+            // 如果第一个正在飞行中的序列号不是NO_SEQUENCE，并且第一个批处理有序列号，且其基本序列号与第一个正在飞行中的序列号不匹配
             if (firstInFlightSequence != RecordBatch.NO_SEQUENCE && first.hasSequence()
                 && first.baseSequence() != firstInFlightSequence)
+                // 如果排队的批处理已经有分配的序列号，则表示它正在重试。在这种情况下，我们等待直到下一个立即的批处理准备就绪并发送。
+                // 我们只在下一行批处理完成时（无论成功还是由于致命错误）才继续。这实际上将我们的飞行请求数减少到1。
                 // If the queued batch already has an assigned sequence, then it is being retried.
                 // In this case, we wait until the next immediate batch is ready and drain that.
                 // We only move on when the next in line batch is complete (either successfully or due to

@@ -145,27 +145,34 @@ class AdminManager(val config: KafkaConfig,
                    responseCallback: Map[String, ApiError] => Unit): Unit = {
 
     // 1. map over topics creating assignment and calling zookeeper
+    // 获取存活的Broker信息
     val brokers = metadataCache.getAliveBrokers.map { b => kafka.admin.BrokerMetadata(b.id, b.rack) }
+    // 遍历要创建的Topic
     val metadata = toCreate.values.map(topic =>
       try {
+        // 如果Topic已经存在，则抛出异常
         if (metadataCache.contains(topic.name))
           throw new TopicExistsException(s"Topic '${topic.name}' already exists.")
 
+        // 检查配置是否为null
         val nullConfigs = topic.configs.asScala.filter(_.value == null).map(_.name)
         if (nullConfigs.nonEmpty)
           throw new InvalidRequestException(s"Null value not supported for topic configs : ${nullConfigs.mkString(",")}")
 
+        // 检查是否同时设置了分区数和副本分配
         if ((topic.numPartitions != NO_NUM_PARTITIONS || topic.replicationFactor != NO_REPLICATION_FACTOR)
             && !topic.assignments().isEmpty) {
           throw new InvalidRequestException("Both numPartitions or replicationFactor and replicasAssignments were set. " +
             "Both cannot be used at the same time.")
         }
 
+        // 解析分区数和副本因子
         val resolvedNumPartitions = if (topic.numPartitions == NO_NUM_PARTITIONS)
           defaultNumPartitions else topic.numPartitions
         val resolvedReplicationFactor = if (topic.replicationFactor == NO_REPLICATION_FACTOR)
           defaultReplicationFactor else topic.replicationFactor
 
+        // 生成副本分配方案
         val assignments = if (topic.assignments.isEmpty) {
           AdminUtils.assignReplicasToBrokers(
             brokers, resolvedNumPartitions, resolvedReplicationFactor)
@@ -178,27 +185,36 @@ class AdminManager(val config: KafkaConfig,
           }
           assignments
         }
+        // 打印副本分配方案
         trace(s"Assignments for topic $topic are $assignments ")
 
+        // 创建配置属性
         val configs = new Properties()
         topic.configs.forEach(entry => configs.setProperty(entry.name, entry.value))
+        // 验证Topic创建
         adminZkClient.validateTopicCreate(topic.name, assignments, configs)
+        // 验证Topic创建策略
         validateTopicCreatePolicy(topic, resolvedNumPartitions, resolvedReplicationFactor, assignments)
 
+        // 填充元数据和配置
         // For responses with DescribeConfigs permission, populate metadata and configs. It is
         // safe to populate it before creating the topic because the values are unset if the
         // creation fails.
         maybePopulateMetadataAndConfigs(includeConfigsAndMetadata, topic.name, configs, assignments)
 
+        // 如果是仅验证模式，则不创建Topic
         if (validateOnly) {
           CreatePartitionsMetadata(topic.name, assignments.keySet)
         } else {
+          // 记录副本分配数量
           controllerMutationQuota.record(assignments.size)
+          // 创建Topic
           adminZkClient.createTopicWithAssignment(topic.name, configs, assignments, validate = false)
           CreatePartitionsMetadata(topic.name, assignments.keySet)
         }
       } catch {
         // Log client errors at a lower level than unexpected exceptions
+        // 捕获并处理各种异常
         case e: TopicExistsException =>
           debug(s"Topic creation failed since topic '${topic.name}' already exists.", e)
           CreatePartitionsMetadata(topic.name, e)
@@ -217,22 +233,27 @@ class AdminManager(val config: KafkaConfig,
       }).toBuffer
 
     // 2. if timeout <= 0, validateOnly or no topics can proceed return immediately
+    // 如果超时时间小于等于0，或者仅验证模式，或者没有Topic可以创建，则立即返回
     if (timeout <= 0 || validateOnly || !metadata.exists(_.error.is(Errors.NONE))) {
       val results = metadata.map { createTopicMetadata =>
         // ignore topics that already have errors
+        // 忽略已经有错误的Topic
         if (createTopicMetadata.error.isSuccess && !validateOnly) {
           (createTopicMetadata.topic, new ApiError(Errors.REQUEST_TIMED_OUT, null))
         } else {
           (createTopicMetadata.topic, createTopicMetadata.error)
         }
       }.toMap
+      // 调用回调函数返回结果
       responseCallback(results)
     } else {
       // 3. else pass the assignments and errors to the delayed operation and set the keys
+      // 否则，将副本分配和错误传递给延迟操作，并设置键
       val delayedCreate = new DelayedCreatePartitions(timeout, metadata, this,
         responseCallback)
       val delayedCreateKeys = toCreate.values.map(topic => TopicKey(topic.name)).toBuffer
       // try to complete the request immediately, otherwise put it into the purgatory
+      // 尝试立即完成请求，否则将其放入延期队列
       topicPurgatory.tryCompleteElseWatch(delayedCreate, delayedCreateKeys)
     }
   }

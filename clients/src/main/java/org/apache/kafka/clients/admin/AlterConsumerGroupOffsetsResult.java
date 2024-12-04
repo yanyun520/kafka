@@ -46,21 +46,31 @@ public class AlterConsumerGroupOffsetsResult {
      * Return a future which can be used to check the result for a given partition.
      */
     public KafkaFuture<Void> partitionResult(final TopicPartition partition) {
+        // 创建一个KafkaFutureImpl实例来存储结果
         final KafkaFutureImpl<Void> result = new KafkaFutureImpl<>();
 
+        // 当this.future完成时，执行以下逻辑
         this.future.whenComplete(new BiConsumer<Map<TopicPartition, Errors>, Throwable>() {
             @Override
             public void accept(final Map<TopicPartition, Errors> topicPartitions, final Throwable throwable) {
+                // 如果throwable不为空，表示发生异常，将异常传递给result
                 if (throwable != null) {
                     result.completeExceptionally(throwable);
-                } else if (!topicPartitions.containsKey(partition)) {
+                }
+                // 如果throwable为空，但topicPartitions不包含指定的partition，表示没有尝试更改该partition的偏移量
+                else if (!topicPartitions.containsKey(partition)) {
+                    // 抛出非法参数异常
                     result.completeExceptionally(new IllegalArgumentException(
                         "Alter offset for partition \"" + partition + "\" was not attempted"));
                 } else {
+                    // 获取指定partition的错误信息
                     final Errors error = topicPartitions.get(partition);
+                    // 如果没有错误，表示操作成功，完成result
                     if (error == Errors.NONE) {
                         result.complete(null);
-                    } else {
+                    }
+                    // 如果有错误，将错误信息传递给result
+                    else {
                         result.completeExceptionally(error.exception());
                     }
                 }
@@ -68,6 +78,7 @@ public class AlterConsumerGroupOffsetsResult {
             }
         });
 
+        // 返回result
         return result;
     }
 

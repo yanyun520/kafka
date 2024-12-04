@@ -334,24 +334,31 @@ class LogSegment private[log] (val log: FileRecords,
    */
   @nonthreadsafe
   def recover(producerStateManager: ProducerStateManager, leaderEpochCache: Option[LeaderEpochFileCache] = None): Int = {
+    // 重置偏移量索引
     offsetIndex.reset()
+    // 重置时间索引
     timeIndex.reset()
+    // 重置事务索引
     txnIndex.reset()
     var validBytes = 0
     var lastIndexEntry = 0
     maxTimestampSoFar = RecordBatch.NO_TIMESTAMP
     try {
+      // 遍历日志批次
       for (batch <- log.batches.asScala) {
+        // 确保批次有效
         batch.ensureValid()
+        // 确保偏移量在范围内
         ensureOffsetInRange(batch.lastOffset)
 
-        // The max timestamp is exposed at the batch level, so no need to iterate the records
+        // 更新最大时间戳
+        // 最大时间戳在批次级别暴露，因此无需迭代记录
         if (batch.maxTimestamp > maxTimestampSoFar) {
           maxTimestampSoFar = batch.maxTimestamp
           offsetOfMaxTimestampSoFar = batch.lastOffset
         }
 
-        // Build offset index
+        // 构建偏移量索引
         if (validBytes - lastIndexEntry > indexIntervalBytes) {
           offsetIndex.append(batch.lastOffset, validBytes)
           timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestampSoFar)
@@ -359,6 +366,7 @@ class LogSegment private[log] (val log: FileRecords,
         }
         validBytes += batch.sizeInBytes()
 
+        // 如果批次魔数大于等于V2，则更新生产者状态和领导者纪元缓存
         if (batch.magic >= RecordBatch.MAGIC_VALUE_V2) {
           leaderEpochCache.foreach { cache =>
             if (batch.partitionLeaderEpoch >= 0 && cache.latestEpoch.forall(batch.partitionLeaderEpoch > _))
@@ -369,17 +377,23 @@ class LogSegment private[log] (val log: FileRecords,
       }
     } catch {
       case e@ (_: CorruptRecordException | _: InvalidRecordException) =>
+        // 警告日志中发现无效消息
         warn("Found invalid messages in log segment %s at byte offset %d: %s. %s"
           .format(log.file.getAbsolutePath, validBytes, e.getMessage, e.getCause))
     }
     val truncated = log.sizeInBytes - validBytes
     if (truncated > 0)
+      // 调试信息：在恢复期间截断了段尾的无效字节
       debug(s"Truncated $truncated invalid bytes at the end of segment ${log.file.getAbsoluteFile} during recovery")
 
+    // 截断日志到有效字节数
     log.truncateTo(validBytes)
+    // 修剪偏移量索引到有效大小
     offsetIndex.trimToValidSize()
+    // 正常情况下关闭的段总是将看到过的最大时间戳附加到日志段中，我们也这样做
     // A normally closed segment always appends the biggest timestamp ever seen into log segment, we do this as well.
     timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestampSoFar, skipFullCheck = true)
+    // 修剪时间索引到有效大小
     timeIndex.trimToValidSize()
     truncated
   }

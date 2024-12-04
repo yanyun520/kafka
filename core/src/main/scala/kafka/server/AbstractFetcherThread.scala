@@ -293,18 +293,29 @@ abstract class AbstractFetcherThread(name: String,
 
   private def processFetchRequest(sessionPartitions: util.Map[TopicPartition, FetchRequest.PartitionData],
                                   fetchRequest: FetchRequest.Builder): Unit = {
+    // 用于存储出现错误的分区集合
     val partitionsWithError = mutable.Set[TopicPartition]()
+    // 用于存储响应数据的映射
     var responseData: Map[TopicPartition, FetchData] = Map.empty
 
     try {
+      // 打印发送获取请求的信息
       trace(s"Sending fetch request $fetchRequest")
+      // 从领导者获取数据
       responseData = fetchFromLeader(fetchRequest)
     } catch {
       case t: Throwable =>
+        // 如果线程正在运行
         if (isRunning) {
+          // 打印获取请求出现错误的信息
           warn(s"Error in response for fetch request $fetchRequest", t)
+          // 在锁定的分区映射上执行操作
           inLock(partitionMapLock) {
+            // 将出现错误的分区添加到集合中
             partitionsWithError ++= partitionStates.partitionSet.asScala
+            // 注释：获取分区时出现错误，休眠一段时间
+            // 注意：`ReplicaFetcherThread.handlePartitionsWithError`也会对每个出现错误的分区引入相同的延迟，
+            // 实际上会加倍延迟。这可能需要改进。
             // there is an error occurred while fetching partitions, sleep a while
             // note that `ReplicaFetcherThread.handlePartitionsWithError` will also introduce the same delay for every
             // partition with error effectively doubling the delay. It would be good to improve this.
@@ -312,42 +323,56 @@ abstract class AbstractFetcherThread(name: String,
           }
         }
     }
+    // 标记请求速率
     fetcherStats.requestRate.mark()
 
     if (responseData.nonEmpty) {
-      // process fetched data
+      // 处理获取的数据
       inLock(partitionMapLock) {
         responseData.forKeyValue { (topicPartition, partitionData) =>
+          // 获取当前分区的状态
           Option(partitionStates.stateValue(topicPartition)).foreach { currentFetchState =>
+            // 注释：可能存在一个分区在挂起的获取请求期间被移除并重新添加或截断。
+            // 在这种情况下，我们仅当分区状态准备好获取并且当前偏移量与请求的偏移量相同时才处理获取响应。
             // It's possible that a partition is removed and re-added or truncated when there is a pending fetch request.
             // In this case, we only want to process the fetch response if the partition state is ready for fetch and
             // the current offset is the same as the offset requested.
             val fetchPartitionData = sessionPartitions.get(topicPartition)
             if (fetchPartitionData != null && fetchPartitionData.fetchOffset == currentFetchState.fetchOffset && currentFetchState.isReadyForFetch) {
+              // 获取请求纪元
               val requestEpoch = if (fetchPartitionData.currentLeaderEpoch.isPresent) Some(fetchPartitionData.currentLeaderEpoch.get().toInt) else None
               partitionData.error match {
                 case Errors.NONE =>
                   try {
+                    // 注释：一旦我们将分区数据传递给子类，我们就不能在这个线程中再对其进行修改
                     // Once we hand off the partition data to the subclass, we can't mess with it any more in this thread
                     val logAppendInfoOpt = processPartitionData(topicPartition, currentFetchState.fetchOffset,
                       partitionData)
 
                     logAppendInfoOpt.foreach { logAppendInfo =>
                       val validBytes = logAppendInfo.validBytes
+                      // 计算下一个偏移量
                       val nextOffset = if (validBytes > 0) logAppendInfo.lastOffset + 1 else currentFetchState.fetchOffset
+                      // 计算延迟
                       val lag = Math.max(0L, partitionData.highWatermark - nextOffset)
+                      // 更新分区延迟统计信息
                       fetcherLagStats.getAndMaybePut(topicPartition).lag = lag
 
-                      // ReplicaDirAlterThread may have removed topicPartition from the partitionStates after processing the partition data
+                      // 注释：ReplicaDirAlterThread可能在处理分区数据后从partitionStates中移除了topicPartition
+                      // 如果有效字节数大于0且partitionStates包含topicPartition，则更新partitionStates
                       if (validBytes > 0 && partitionStates.contains(topicPartition)) {
-                        // Update partitionStates only if there is no exception during processPartitionData
+                        // 仅当在processPartitionData期间没有异常时更新partitionStates
                         val newFetchState = PartitionFetchState(nextOffset, Some(lag), currentFetchState.currentLeaderEpoch, state = Fetching)
                         partitionStates.updateAndMoveToEnd(topicPartition, newFetchState)
+                        // 标记字节速率
                         fetcherStats.byteRate.mark(validBytes)
                       }
                     }
                   } catch {
                     case ime@( _: CorruptRecordException | _: InvalidRecordException) =>
+                      // 注释：我们记录错误并继续。这确保了两件事
+                      // 1. 如果主题分区中存在损坏的消息，它不会使获取线程崩溃，也不会导致其他主题分区滞后
+                      // 2. 如果消息由于日志中的瞬态状态（截断、部分写入）而损坏，我们可以简单地继续，并在随后的获取中修复它
                       // we log the error and continue. This ensures two things
                       // 1. If there is a corrupt message in a topic partition, it does not bring the fetcher thread
                       //    down and cause other topic partition to also lag
@@ -359,39 +384,47 @@ abstract class AbstractFetcherThread(name: String,
                     case e: KafkaStorageException =>
                       error(s"Error while processing data for partition $topicPartition " +
                         s"at offset ${currentFetchState.fetchOffset}", e)
+                      // 标记分区失败
                       markPartitionFailed(topicPartition)
                     case t: Throwable =>
-                      // stop monitoring this partition and add it to the set of failed partitions
+                      // 停止监视此分区并将其添加到失败的分区集中
                       error(s"Unexpected error occurred while processing data for partition $topicPartition " +
                         s"at offset ${currentFetchState.fetchOffset}", t)
+                      // 标记分区失败
                       markPartitionFailed(topicPartition)
                   }
                 case Errors.OFFSET_OUT_OF_RANGE =>
+                  // 如果处理偏移量超出范围错误，则将分区添加到出现错误的集合中
                   if (handleOutOfRangeError(topicPartition, currentFetchState, requestEpoch))
                     partitionsWithError += topicPartition
 
                 case Errors.UNKNOWN_LEADER_EPOCH =>
                   debug(s"Remote broker has a smaller leader epoch for partition $topicPartition than " +
                     s"this replica's current leader epoch of ${currentFetchState.currentLeaderEpoch}.")
+                  // 将分区添加到出现错误的集合中
                   partitionsWithError += topicPartition
 
                 case Errors.FENCED_LEADER_EPOCH =>
+                  // 如果处理围栏领导者纪元错误，则将分区添加到出现错误的集合中
                   if (onPartitionFenced(topicPartition, requestEpoch)) partitionsWithError += topicPartition
 
                 case Errors.NOT_LEADER_OR_FOLLOWER =>
                   debug(s"Remote broker is not the leader for partition $topicPartition, which could indicate " +
                     "that the partition is being moved")
+                  // 将分区添加到出现错误的集合中
                   partitionsWithError += topicPartition
 
                 case Errors.UNKNOWN_TOPIC_OR_PARTITION =>
                   warn(s"Received ${Errors.UNKNOWN_TOPIC_OR_PARTITION} from the leader for partition $topicPartition. " +
                        "This error may be returned transiently when the partition is being created or deleted, but it is not " +
                        "expected to persist.")
+                  // 将分区添加到出现错误的集合中
                   partitionsWithError += topicPartition
 
                 case _ =>
                   error(s"Error for partition $topicPartition at offset ${currentFetchState.fetchOffset}",
                     partitionData.error.exception)
+                  // 将分区添加到出现错误的集合中
                   partitionsWithError += topicPartition
               }
             }
@@ -401,6 +434,7 @@ abstract class AbstractFetcherThread(name: String,
     }
 
     if (partitionsWithError.nonEmpty) {
+      // 处理出现错误的分区
       handlePartitionsWithErrors(partitionsWithError, "processFetchRequest")
     }
   }
@@ -426,27 +460,45 @@ abstract class AbstractFetcherThread(name: String,
     warn(s"Partition $topicPartition marked as failed")
   }
 
+    /**
+     * 添加分区。
+     *
+     * @param initialFetchStates 包含初始获取状态的分区映射，键为分区，值为偏移量和纪元。
+     * @return 添加的分区集合。
+     */
   def addPartitions(initialFetchStates: Map[TopicPartition, OffsetAndEpoch]): Set[TopicPartition] = {
+    // 锁定 partitionMapLock
     partitionMapLock.lockInterruptibly()
     try {
+      // 从 failedPartitions 中移除 initialFetchStates 中的所有 key
       failedPartitions.removeAll(initialFetchStates.keySet)
 
+      // 遍历 initialFetchStates 中的键值对
       initialFetchStates.forKeyValue { (tp, initialFetchState) =>
+        // 我们可以跳过截断步骤，如果 leader epoch 与现有 epoch 匹配
         // We can skip the truncation step iff the leader epoch matches the existing epoch
         val currentState = partitionStates.stateValue(tp)
         val updatedState = if (currentState != null && currentState.currentLeaderEpoch == initialFetchState.leaderEpoch) {
           currentState
         } else if (initialFetchState.offset < 0) {
+          // 如果 initialFetchState.offset 小于 0，则调用 fetchOffsetAndTruncate 方法并返回结果
           fetchOffsetAndTruncate(tp, initialFetchState.leaderEpoch)
         } else {
+          // 否则，创建一个新的 PartitionFetchState 对象
           PartitionFetchState(initialFetchState.offset, None, initialFetchState.leaderEpoch, state = Truncating)
         }
+        // 更新 partitionStates 并将其移动到末尾
         partitionStates.updateAndMoveToEnd(tp, updatedState)
       }
 
+      // 通知所有等待的线程
       partitionMapCond.signalAll()
+      // 返回 initialFetchStates 的 keySet
       initialFetchStates.keySet
-    } finally partitionMapLock.unlock()
+    } finally {
+      // 解锁 partitionMapLock
+      partitionMapLock.unlock()
+    }
   }
 
   /**

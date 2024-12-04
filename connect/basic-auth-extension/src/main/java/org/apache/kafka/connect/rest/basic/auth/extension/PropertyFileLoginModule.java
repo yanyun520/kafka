@@ -57,29 +57,42 @@ public class PropertyFileLoginModule implements LoginModule {
 
     @Override
     public void initialize(Subject subject, CallbackHandler callbackHandler, Map<String, ?> sharedState, Map<String, ?> options) {
+        // 保存CallbackHandler
         this.callbackHandler = callbackHandler;
+        // 从options中获取文件名
         fileName = (String) options.get(FILE_OPTIONS);
+        // 如果文件名为空或仅包含空白字符，则抛出异常
         if (fileName == null || fileName.trim().isEmpty()) {
             throw new ConfigException("Property Credentials file must be specified");
         }
 
+        // 如果credentialPropertiesMap中不包含该文件名的条目
         if (!credentialPropertiesMap.containsKey(fileName)) {
+            // 日志记录，表示正在打开凭证属性文件
             log.trace("Opening credential properties file '{}'", fileName);
+            // 创建Properties对象
             Properties credentialProperties = new Properties();
             try {
+                // 使用try-with-resources语句打开文件输入流
                 try (InputStream inputStream = Files.newInputStream(Paths.get(fileName))) {
+                    // 日志记录，表示正在解析凭证属性文件
                     log.trace("Parsing credential properties file '{}'", fileName);
+                    // 加载属性文件
                     credentialProperties.load(inputStream);
                 }
+                // 将属性文件内容放入credentialPropertiesMap中，如果键已存在则不放入
                 credentialPropertiesMap.putIfAbsent(fileName, credentialProperties);
+                // 如果属性文件为空，则记录警告日志
                 if (credentialProperties.isEmpty())
                     log.warn("Credential properties file '{}' is empty; all requests will be permitted",
                         fileName);
             } catch (IOException e) {
+                // 记录错误日志并抛出异常
                 log.error("Error loading credentials file ", e);
                 throw new ConfigException("Error loading Property Credentials file");
             }
         } else {
+            // 日志记录，表示凭证属性文件已被打开并解析，将从缓存的内存中读取
             log.trace(
                 "Credential properties file '{}' has already been opened and parsed; will read from cached, in-memory store",
                 fileName);

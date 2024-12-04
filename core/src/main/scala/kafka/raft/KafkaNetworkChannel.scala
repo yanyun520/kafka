@@ -126,36 +126,55 @@ class KafkaNetworkChannel(time: Time,
   }
 
   private def sendOutboundRequests(currentTimeMs: Long): Unit = {
+    // 当pendingOutbound队列不为空时循环处理
     while (!pendingOutbound.isEmpty) {
+      // 从pendingOutbound队列中取出请求
       val request = pendingOutbound.peek()
+      // 根据请求的destinationId从endpoints中获取对应的节点
       endpoints.get(request.destinationId) match {
         case Some(node) =>
+          // 如果客户端与节点连接失败
           if (client.connectionFailed(node)) {
+            // 从pendingOutbound队列中移除请求            // 发送客户端请求
+
             pendingOutbound.poll()
+            // 获取请求的API Key
             val apiKey = ApiKeys.forId(request.data.apiKey)
+            // 构建错误响应
             val disconnectResponse = RaftUtil.errorResponse(apiKey, Errors.BROKER_NOT_AVAILABLE)
+            // 将错误响应放入undelivered队列
             val success = undelivered.offer(new RaftResponse.Inbound(
               request.correlationId, disconnectResponse, request.destinationId))
+            // 如果undelivered队列已满，则抛出异常
             if (!success) {
               throw new KafkaException("Undelivered queue is full")
             }
 
+            // 确保重置连接状态
             // Make sure to reset the connection state
             client.ready(node, currentTimeMs)
           } else if (client.ready(node, currentTimeMs)) {
+            // 从pendingOutbound队列中移除请求
             pendingOutbound.poll()
+            // 构建客户端请求
             val clientRequest = buildClientRequest(request)
             client.send(clientRequest, currentTimeMs)
           } else {
+            // 如果当前客户端未准备好，则在下一次轮询时重试该请求
             // We will retry this request on the next poll
             return
           }
 
         case None =>
+          // 从pendingOutbound队列中移除请求
           pendingOutbound.poll()
+          // 获取请求的API Key
           val apiKey = ApiKeys.forId(request.data.apiKey)
+          // 构建错误响应
           val responseData = RaftUtil.errorResponse(apiKey, Errors.BROKER_NOT_AVAILABLE)
+          // 构建响应
           val response = new RaftResponse.Inbound(request.correlationId, responseData, request.destinationId)
+          // 将响应放入undelivered队列
           if (!undelivered.offer(response))
             throw new KafkaException("Undelivered queue is full")
       }

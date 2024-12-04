@@ -380,8 +380,11 @@ class ReplicaManager(val config: KafkaConfig,
                    partitionStates: Map[TopicPartition, StopReplicaPartitionState]
                   ): (mutable.Map[TopicPartition, Errors], Errors) = {
     replicaStateChangeLock synchronized {
+      // 记录日志信息
       stateChangeLogger.info(s"Handling StopReplica request correlationId $correlationId from controller " +
         s"$controllerId for ${partitionStates.size} partitions")
+
+      // 如果开启了Trace级别的日志记录，则记录更详细的日志信息
       if (stateChangeLogger.isTraceEnabled)
         partitionStates.forKeyValue { (topicPartition, partitionState) =>
           stateChangeLogger.trace(s"Received StopReplica request $partitionState " +
@@ -389,22 +392,32 @@ class ReplicaManager(val config: KafkaConfig,
             s"epoch $controllerEpoch for partition $topicPartition")
         }
 
+      // 初始化响应Map
       val responseMap = new collection.mutable.HashMap[TopicPartition, Errors]
+
+      // 检查Controller Epoch是否过期
       if (controllerEpoch < this.controllerEpoch) {
         stateChangeLogger.warn(s"Ignoring StopReplica request from " +
           s"controller $controllerId with correlation id $correlationId " +
           s"since its controller epoch $controllerEpoch is old. " +
           s"Latest known controller epoch is ${this.controllerEpoch}")
+        // 返回响应Map和错误码
         (responseMap, Errors.STALE_CONTROLLER_EPOCH)
       } else {
+        // 更新Controller Epoch
         this.controllerEpoch = controllerEpoch
 
+        // 初始化已停止的分区Map
         val stoppedPartitions = mutable.Map.empty[TopicPartition, StopReplicaPartitionState]
+
+        // 遍历partitionStates，处理每个分区
         partitionStates.forKeyValue { (topicPartition, partitionState) =>
           val deletePartition = partitionState.deletePartition
 
+          // 获取分区状态
           getPartition(topicPartition) match {
             case HostedPartition.Offline =>
+              // 分区处于离线状态，记录警告日志并设置响应码
               stateChangeLogger.warn(s"Ignoring StopReplica request (delete=$deletePartition) from " +
                 s"controller $controllerId with correlation id $correlationId " +
                 s"epoch $controllerEpoch for partition $topicPartition as the local replica for the " +
@@ -412,19 +425,22 @@ class ReplicaManager(val config: KafkaConfig,
               responseMap.put(topicPartition, Errors.KAFKA_STORAGE_ERROR)
 
             case HostedPartition.Online(partition) =>
+              // 分区处于在线状态，处理分区逻辑
               val currentLeaderEpoch = partition.getLeaderEpoch
               val requestLeaderEpoch = partitionState.leaderEpoch
-              // When a topic is deleted, the leader epoch is not incremented. To circumvent this,
-              // a sentinel value (EpochDuringDelete) overwriting any previous epoch is used.
-              // When an older version of the StopReplica request which does not contain the leader
-              // epoch, a sentinel value (NoEpoch) is used and bypass the epoch validation.
+              // 当主题被删除时，Leader Epoch不会被递增。为了规避这个问题，
+              // 使用一个哨兵值（EpochDuringDelete）来覆盖之前的Epoch。
+              // 当一个较旧版本的StopReplica请求不包含Leader Epoch时，
+              // 使用一个哨兵值（NoEpoch）并绕过Epoch验证。
               if (requestLeaderEpoch == LeaderAndIsr.EpochDuringDelete ||
                   requestLeaderEpoch == LeaderAndIsr.NoEpoch ||
                   requestLeaderEpoch > currentLeaderEpoch) {
+                // 将分区添加到stoppedPartitions中
                 stoppedPartitions += topicPartition -> partitionState
-                // Assume that everything will go right. It is overwritten in case of an error.
+                // 假设一切都会顺利进行。如果出现错误，将覆盖此响应码。
                 responseMap.put(topicPartition, Errors.NONE)
               } else if (requestLeaderEpoch < currentLeaderEpoch) {
+                // 如果请求的Leader Epoch小于当前的Leader Epoch，记录警告日志并设置响应码
                 stateChangeLogger.warn(s"Ignoring StopReplica request (delete=$deletePartition) from " +
                   s"controller $controllerId with correlation id $correlationId " +
                   s"epoch $controllerEpoch for partition $topicPartition since its associated " +
@@ -432,6 +448,7 @@ class ReplicaManager(val config: KafkaConfig,
                   s"leader epoch $currentLeaderEpoch")
                 responseMap.put(topicPartition, Errors.FENCED_LEADER_EPOCH)
               } else {
+                // 如果请求的Leader Epoch等于当前的Leader Epoch，记录信息日志并设置响应码
                 stateChangeLogger.info(s"Ignoring StopReplica request (delete=$deletePartition) from " +
                   s"controller $controllerId with correlation id $correlationId " +
                   s"epoch $controllerEpoch for partition $topicPartition since its associated " +
@@ -440,47 +457,48 @@ class ReplicaManager(val config: KafkaConfig,
               }
 
             case HostedPartition.None =>
-              // Delete log and corresponding folders in case replica manager doesn't hold them anymore.
-              // This could happen when topic is being deleted while broker is down and recovers.
+              // 如果本地没有托管该分区，则将其添加到stoppedPartitions中并设置响应码为NONE
               stoppedPartitions += topicPartition -> partitionState
               responseMap.put(topicPartition, Errors.NONE)
           }
         }
 
-        // First stop fetchers for all partitions.
+        // 首先停止所有分区的Fetcher
         val partitions = stoppedPartitions.keySet
         replicaFetcherManager.removeFetcherForPartitions(partitions)
         replicaAlterLogDirsManager.removeFetcherForPartitions(partitions)
 
-        // Second remove deleted partitions from the partition map. Fetchers rely on the
-        // ReplicaManager to get Partition's information so they must be stopped first.
+        // 其次，从分区映射中删除已删除的分区。Fetcher依赖于ReplicaManager来获取分区信息，
+        // 因此必须先停止它们。
         val deletedPartitions = mutable.Set.empty[TopicPartition]
         stoppedPartitions.forKeyValue { (topicPartition, partitionState) =>
           if (partitionState.deletePartition) {
             getPartition(topicPartition) match {
               case hostedPartition@HostedPartition.Online(partition) =>
                 if (allPartitions.remove(topicPartition, hostedPartition)) {
+                  // 如果成功删除分区，则可能需要删除对应的主题指标
                   maybeRemoveTopicMetrics(topicPartition.topic)
-                  // Logs are not deleted here. They are deleted in a single batch later on.
-                  // This is done to avoid having to checkpoint for every deletions.
+                  // 日志不会在这里被删除。它们将在稍后的单个批次中被删除。
+                  // 这样做是为了避免每次删除时都需要进行检查点。
                   partition.delete()
                 }
 
               case _ =>
             }
 
+            // 将分区添加到deletedPartitions中
             deletedPartitions += topicPartition
-          }
 
-          // If we were the leader, we may have some operations still waiting for completion.
-          // We force completion to prevent them from timing out.
-          completeDelayedFetchOrProduceRequests(topicPartition)
+            // 如果我们是Leader，则可能需要强制完成一些仍在等待完成的任务。
+            // 我们强制完成这些任务以防止它们超时。
+            completeDelayedFetchOrProduceRequests(topicPartition)
         }
 
-        // Third delete the logs and checkpoint.
+        // 第三，删除日志和检查点。
         logManager.asyncDelete(deletedPartitions, (topicPartition, exception) => {
           exception match {
             case e: KafkaStorageException =>
+              // 如果删除日志时发生KafkaStorageException异常，则记录错误日志并设置响应码
               stateChangeLogger.error(s"Ignoring StopReplica request (delete=true) from " +
                 s"controller $controllerId with correlation id $correlationId " +
                 s"epoch $controllerEpoch for partition $topicPartition as the local replica for the " +
@@ -488,6 +506,7 @@ class ReplicaManager(val config: KafkaConfig,
               responseMap.put(topicPartition, Errors.KAFKA_STORAGE_ERROR)
 
             case e =>
+              // 如果发生其他异常，则记录错误日志并根据异常设置响应码
               stateChangeLogger.error(s"Ignoring StopReplica request (delete=true) from " +
                 s"controller $controllerId with correlation id $correlationId " +
                 s"epoch $controllerEpoch for partition $topicPartition due to an unexpected " +
@@ -495,6 +514,8 @@ class ReplicaManager(val config: KafkaConfig,
               responseMap.put(topicPartition, Errors.forException(e))
           }
         })
+
+        // 返回响应Map和NONE错误码
 
         (responseMap, Errors.NONE)
       }
@@ -615,12 +636,17 @@ class ReplicaManager(val config: KafkaConfig,
                     responseCallback: Map[TopicPartition, PartitionResponse] => Unit,
                     delayedProduceLock: Option[Lock] = None,
                     recordConversionStatsCallback: Map[TopicPartition, RecordConversionStats] => Unit = _ => ()): Unit = {
+    // 检查requiredAcks是否有效
     if (isValidRequiredAcks(requiredAcks)) {
+      // 记录开始时间
       val sTime = time.milliseconds
+      // 将记录追加到本地日志
       val localProduceResults = appendToLocalLog(internalTopicsAllowed = internalTopicsAllowed,
         origin, entriesPerPartition, requiredAcks)
+      // 输出调试信息
       debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
 
+      // 构造生产状态
       val produceStatus = localProduceResults.map { case (topicPartition, result) =>
         topicPartition ->
                 ProducePartitionStatus(
@@ -629,19 +655,25 @@ class ReplicaManager(val config: KafkaConfig,
                     result.info.logStartOffset, result.info.recordErrors.asJava, result.info.errorMessage)) // response status
       }
 
+      // 添加操作到队列
       actionQueue.add {
         () =>
+          // 对每个分区进行处理
           localProduceResults.foreach {
             case (topicPartition, result) =>
+              // 获取请求键
               val requestKey = TopicPartitionOperationKey(topicPartition)
+              // 根据leader高水位变化进行处理
               result.info.leaderHwChange match {
                 case LeaderHwChange.Increased =>
                   // some delayed operations may be unblocked after HW changed
+                  // 高水位增加后，某些延迟操作可能被解除阻塞
                   delayedProducePurgatory.checkAndComplete(requestKey)
                   delayedFetchPurgatory.checkAndComplete(requestKey)
                   delayedDeleteRecordsPurgatory.checkAndComplete(requestKey)
                 case LeaderHwChange.Same =>
                   // probably unblock some follower fetch requests since log end offset has been updated
+                  // 日志结束偏移量更新后，可能解除阻塞一些follower的获取请求
                   delayedFetchPurgatory.checkAndComplete(requestKey)
                 case LeaderHwChange.None =>
                   // nothing
@@ -649,29 +681,31 @@ class ReplicaManager(val config: KafkaConfig,
           }
       }
 
+      // 调用记录转换统计回调
       recordConversionStatsCallback(localProduceResults.map { case (k, v) => k -> v.info.recordConversionStats })
 
+      // 检查是否需要延迟生产请求
       if (delayedProduceRequestRequired(requiredAcks, entriesPerPartition, localProduceResults)) {
-        // create delayed produce operation
+        // 创建延迟生产操作
         val produceMetadata = ProduceMetadata(requiredAcks, produceStatus)
         val delayedProduce = new DelayedProduce(timeout, produceMetadata, this, responseCallback, delayedProduceLock)
 
-        // create a list of (topic, partition) pairs to use as keys for this delayed produce operation
+        // 创建延迟生产操作的键列表
         val producerRequestKeys = entriesPerPartition.keys.map(TopicPartitionOperationKey(_)).toSeq
 
-        // try to complete the request immediately, otherwise put it into the purgatory
-        // this is because while the delayed produce operation is being created, new
-        // requests may arrive and hence make this operation completable.
+        // 尝试立即完成请求，否则放入等待区
+        // 因为在创建延迟生产操作时，可能会有新请求到达，从而可能使该操作可完成
         delayedProducePurgatory.tryCompleteElseWatch(delayedProduce, producerRequestKeys)
 
       } else {
-        // we can respond immediately
+        // 可以立即响应
         val produceResponseStatus = produceStatus.map { case (k, status) => k -> status.responseStatus }
         responseCallback(produceResponseStatus)
       }
     } else {
-      // If required.acks is outside accepted range, something is wrong with the client
-      // Just return an error and don't handle the request at all
+      // 如果required.acks超出接受范围，客户端有问题
+      // 仅返回错误，不处理请求
+      // 返回错误响应
       val responseStatus = entriesPerPartition.map { case (topicPartition, _) =>
         topicPartition -> new PartitionResponse(Errors.INVALID_REQUIRED_ACKS,
           LogAppendInfo.UnknownLogAppendInfo.firstOffset.getOrElse(-1), RecordBatch.NO_TIMESTAMP, LogAppendInfo.UnknownLogAppendInfo.logStartOffset)

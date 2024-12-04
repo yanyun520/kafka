@@ -118,45 +118,61 @@ object RequestChannel extends Logging {
 
     def loggableRequest: AbstractRequest = {
 
+      // 定义一个函数，用于获取可记录的值
       def loggableValue(resourceType: ConfigResource.Type, name: String, value: String): String = {
+        // 判断资源类型是否敏感
         val maybeSensitive = resourceType match {
           case ConfigResource.Type.BROKER => KafkaConfig.maybeSensitive(KafkaConfig.configType(name))
           case ConfigResource.Type.TOPIC => KafkaConfig.maybeSensitive(LogConfig.configType(name))
           case ConfigResource.Type.BROKER_LOGGER => false
           case _ => true
         }
+        // 如果敏感，则隐藏密码，否则返回原值
         if (maybeSensitive) Password.HIDDEN else value
       }
 
+      // 根据请求类型处理日志记录
       bodyAndSize.request match {
+        // 如果是AlterConfigsRequest请求
         case alterConfigs: AlterConfigsRequest =>
+          // 转换可记录的配置
           val loggableConfigs = alterConfigs.configs().asScala.map { case (resource, config) =>
+            // 创建一个新的AlterConfigsRequest.Config，其中包含可记录的条目
             val loggableEntries = new AlterConfigsRequest.Config(config.entries.asScala.map { entry =>
                 new AlterConfigsRequest.ConfigEntry(entry.name, loggableValue(resource.`type`, entry.name, entry.value))
             }.asJavaCollection)
             (resource, loggableEntries)
           }.asJava
+          // 使用可记录的配置构建新的AlterConfigsRequest
           new AlterConfigsRequest.Builder(loggableConfigs, alterConfigs.validateOnly).build(alterConfigs.version())
 
+        // 如果是IncrementalAlterConfigsRequest请求
         case alterConfigs: IncrementalAlterConfigsRequest =>
+          // 创建一个新的AlterConfigsResourceCollection
           val resources = new AlterConfigsResourceCollection(alterConfigs.data.resources.size)
+          // 遍历资源并构建新的AlterConfigsResource
           alterConfigs.data.resources.forEach { resource =>
             val newResource = new AlterConfigsResource()
               .setResourceName(resource.resourceName)
               .setResourceType(resource.resourceType)
+            // 遍历配置并添加到新的资源中
             resource.configs.forEach { config =>
               newResource.configs.add(new AlterableConfig()
                 .setName(config.name)
                 .setValue(loggableValue(ConfigResource.Type.forId(resource.resourceType), config.name, config.value))
                 .setConfigOperation(config.configOperation))
             }
+            // 将新的资源添加到资源集合中
             resources.add(newResource)
           }
+          // 创建新的IncrementalAlterConfigsRequestData并设置资源和验证标志
           val data = new IncrementalAlterConfigsRequestData()
             .setValidateOnly(alterConfigs.data().validateOnly())
             .setResources(resources)
+          // 使用新的数据构建新的IncrementalAlterConfigsRequest
           new IncrementalAlterConfigsRequest.Builder(data).build(alterConfigs.version)
 
+        // 其他请求类型，直接返回原始请求
         case _ =>
           bodyAndSize.request
       }
@@ -173,32 +189,47 @@ object RequestChannel extends Logging {
       val endTimeNanos = Time.SYSTEM.nanoseconds
 
       /**
-       * Converts nanos to millis with micros precision as additional decimal places in the request log have low
-       * signal to noise ratio. When it comes to metrics, there is little difference either way as we round the value
-       * to the nearest long.
+       * 将纳秒转换为毫秒，并保留微秒精度，因为请求日志中的额外小数位具有较低的信噪比。
+       * 在度量标准方面，四舍五入到最接近的长整型后，两者几乎没有区别。
        */
       def nanosToMs(nanos: Long): Double = {
+        // 取最大值以确保纳秒数非负
         val positiveNanos = math.max(nanos, 0)
+        // 将纳秒转换为微秒，然后转换为毫秒
         TimeUnit.NANOSECONDS.toMicros(positiveNanos).toDouble / TimeUnit.MILLISECONDS.toMicros(1)
       }
 
+      // 计算请求队列时间（毫秒）
       val requestQueueTimeMs = nanosToMs(requestDequeueTimeNanos - startTimeNanos)
+      // 计算API本地处理时间（毫秒）
       val apiLocalTimeMs = nanosToMs(apiLocalCompleteTimeNanos - requestDequeueTimeNanos)
+      // 计算API远程处理时间（毫秒）
       val apiRemoteTimeMs = nanosToMs(responseCompleteTimeNanos - apiLocalCompleteTimeNanos)
+      // 计算响应队列时间（毫秒）
       val responseQueueTimeMs = nanosToMs(responseDequeueTimeNanos - responseCompleteTimeNanos)
+      // 计算响应发送时间（毫秒）
       val responseSendTimeMs = nanosToMs(endTimeNanos - responseDequeueTimeNanos)
+      // 计算消息转换时间（毫秒）
       val messageConversionsTimeMs = nanosToMs(messageConversionsTimeNanos)
+      // 计算总时间（毫秒）
       val totalTimeMs = nanosToMs(endTimeNanos - startTimeNanos)
+
+      // 根据API键获取度量指标名称
       val fetchMetricNames =
         if (header.apiKey == ApiKeys.FETCH) {
           val isFromFollower = body[FetchRequest].isFromFollower
           Seq(
+            // 如果是从follower发起的请求，则使用followFetchMetricName，否则使用consumerFetchMetricName
             if (isFromFollower) RequestMetrics.followFetchMetricName
             else RequestMetrics.consumerFetchMetricName
           )
         }
         else Seq.empty
+
+      // 将fetchMetricNames和apiKey名称添加到metricNames列表中
       val metricNames = fetchMetricNames :+ header.apiKey.name
+
+      // 遍历metricNames列表，更新对应的度量指标
       metricNames.foreach { metricName =>
         val m = metrics(metricName)
         m.requestRate(header.apiVersion).mark()
@@ -214,18 +245,20 @@ object RequestChannel extends Logging {
         m.tempMemoryBytesHist.foreach(_.update(temporaryMemoryBytes))
       }
 
-      // Records network handler thread usage. This is included towards the request quota for the
-      // user/client. Throttling is only performed when request handler thread usage
-      // is recorded, just before responses are queued for delivery.
-      // The time recorded here is the time spent on the network thread for receiving this request
-      // and sending the response. Note that for the first request on a connection, the time includes
-      // the total time spent on authentication, which may be significant for SASL/SSL.
+      // 记录网络线程使用时间，这包含在用户/客户端的请求配额中
+      // 仅在记录请求处理线程使用情况时执行限流，即在响应排队发送之前
+      // 记录的时间是在网络线程上接收请求和发送响应所花费的时间
+      // 请注意，对于连接上的第一个请求，时间包括身份验证的总时间，对于SASL/SSL来说，这可能很重要
+      // 记录网络线程时间回调
       recordNetworkThreadTimeCallback.foreach(record => record(networkThreadTimeNanos))
 
+      // 如果启用了请求日志记录
       if (isRequestLoggingEnabled) {
         val detailsEnabled = requestLogger.underlying.isTraceEnabled
         val responseString = response.responseString.getOrElse(
           throw new IllegalStateException("responseAsString should always be defined if request logging is enabled"))
+
+        // 构建请求日志字符串
         val builder = new StringBuilder(256)
         builder.append("Completed request:").append(requestDesc(detailsEnabled))
           .append(",response:").append(responseString)
@@ -241,10 +274,16 @@ object RequestChannel extends Logging {
           .append(",principal:").append(session.principal)
           .append(",listener:").append(context.listenerName.value)
           .append(",clientInformation:").append(context.clientInformation)
+
+        // 如果使用了临时内存，则添加到日志中
         if (temporaryMemoryBytes > 0)
           builder.append(",temporaryMemoryBytes:").append(temporaryMemoryBytes)
+
+        // 如果存在消息转换时间，则添加到日志中
         if (messageConversionsTimeMs > 0)
           builder.append(",messageConversionsTime:").append(messageConversionsTimeMs)
+
+        // 记录请求日志
         requestLogger.debug(builder.toString)
       }
     }

@@ -124,29 +124,43 @@ public class CooperativeStickyAssignor extends AbstractStickyAssignor {
 
     private Map<TopicPartition, String> computePartitionsTransferringOwnership(Map<String, Subscription> subscriptions,
                                                                                Map<String, List<TopicPartition>> assignments) {
+        // 创建一个存储所有新增分区的映射表
         Map<TopicPartition, String> allAddedPartitions = new HashMap<>();
+        // 创建一个存储所有被撤销分区的集合
         Set<TopicPartition> allRevokedPartitions = new HashSet<>();
 
+        // 遍历每个消费者的分区分配情况
         for (final Map.Entry<String, List<TopicPartition>> entry : assignments.entrySet()) {
+            // 获取当前消费者的ID
             String consumer = entry.getKey();
 
+            // 获取当前消费者拥有的分区列表
             List<TopicPartition> ownedPartitions = subscriptions.get(consumer).ownedPartitions();
+            // 获取当前消费者被分配的分区列表
             List<TopicPartition> assignedPartitions = entry.getValue();
 
+            // 将当前消费者拥有的分区列表转换为集合，方便快速查找
             Set<TopicPartition> ownedPartitionsSet = new HashSet<>(ownedPartitions);
+            // 遍历当前消费者被分配的分区列表
             for (TopicPartition tp : assignedPartitions) {
+                // 如果该分区不在当前消费者拥有的分区集合中，则将其添加到新增分区映射表中
                 if (!ownedPartitionsSet.contains(tp))
                     allAddedPartitions.put(tp, consumer);
             }
 
+            // 将当前消费者被分配的分区列表转换为集合，方便快速查找
             Set<TopicPartition> assignedPartitionsSet = new HashSet<>(assignedPartitions);
+            // 遍历当前消费者拥有的分区列表
             for (TopicPartition tp : ownedPartitions) {
+                // 如果该分区不在当前消费者被分配的分区集合中，则将其添加到被撤销分区集合中
                 if (!assignedPartitionsSet.contains(tp))
                     allRevokedPartitions.add(tp);
             }
         }
 
+        // 只保留在新增分区映射表中且在被撤销分区集合中的分区
         allAddedPartitions.keySet().retainAll(allRevokedPartitions);
+        // 返回新增分区映射表
         return allAddedPartitions;
     }
 }

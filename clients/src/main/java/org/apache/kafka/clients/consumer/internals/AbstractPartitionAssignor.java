@@ -49,26 +49,41 @@ public abstract class AbstractPartitionAssignor implements ConsumerPartitionAssi
 
     @Override
     public GroupAssignment assign(Cluster metadata, GroupSubscription groupSubscription) {
+        // 获取订阅信息
         Map<String, Subscription> subscriptions = groupSubscription.groupSubscription();
+        // 存储所有订阅的主题
         Set<String> allSubscribedTopics = new HashSet<>();
-        for (Map.Entry<String, Subscription> subscriptionEntry : subscriptions.entrySet())
+        // 遍历订阅信息，将主题添加到allSubscribedTopics集合中
+        for (Map.Entry<String, Subscription> subscriptionEntry : subscriptions.entrySet()) {
+            // 添加主题到集合中
             allSubscribedTopics.addAll(subscriptionEntry.getValue().topics());
+        }
 
+        // 存储每个主题的分区数量
         Map<String, Integer> partitionsPerTopic = new HashMap<>();
+        // 遍历所有订阅的主题
         for (String topic : allSubscribedTopics) {
+            // 获取主题的分区数量
             Integer numPartitions = metadata.partitionCountForTopic(topic);
             if (numPartitions != null && numPartitions > 0)
+                // 将分区数量存入partitionsPerTopic映射中
                 partitionsPerTopic.put(topic, numPartitions);
             else
+                // 如果分区数量为null或小于等于0，则记录日志
                 log.debug("Skipping assignment for topic {} since no metadata is available", topic);
         }
 
+        // 分配分区
         Map<String, List<TopicPartition>> rawAssignments = assign(partitionsPerTopic, subscriptions);
 
-        // this class maintains no user data, so just wrap the results
+        // 此类不维护用户数据，只需包装结果
+        // 存储分配结果
         Map<String, Assignment> assignments = new HashMap<>();
-        for (Map.Entry<String, List<TopicPartition>> assignmentEntry : rawAssignments.entrySet())
+        // 遍历分配结果，将结果包装为Assignment对象存入assignments映射中
+        for (Map.Entry<String, List<TopicPartition>> assignmentEntry : rawAssignments.entrySet()) {
             assignments.put(assignmentEntry.getKey(), new Assignment(assignmentEntry.getValue()));
+        }
+        // 返回分配结果
         return new GroupAssignment(assignments);
     }
 

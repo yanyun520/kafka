@@ -79,6 +79,7 @@ public class MetricNameTemplate {
         return this.name;
     }
 
+
     /**
      * Get the name of the group.
      *
@@ -90,7 +91,6 @@ public class MetricNameTemplate {
 
     /**
      * Get the description of the metric.
-     *
      * @return the metric description; never null
      */
     public String description() {

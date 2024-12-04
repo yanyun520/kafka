@@ -119,45 +119,69 @@ class SocketServer(val config: KafkaConfig,
    * @param startProcessingRequests Flag indicating whether `Processor`s must be started.
    */
   def startup(startProcessingRequests: Boolean = true): Unit = {
+    // 同步代码块，确保线程安全
     this.synchronized {
+      // 创建连接配额实例
       connectionQuotas = new ConnectionQuotas(config, time, metrics)
+      // 创建控制平面接收器和处理器
       createControlPlaneAcceptorAndProcessor(config.controlPlaneListener)
+      // 创建数据平面接收器和处理器
       createDataPlaneAcceptorsAndProcessors(config.numNetworkThreads, config.dataPlaneListeners)
+      // 如果需要处理请求，则启动处理请求
       if (startProcessingRequests) {
         this.startProcessingRequests()
       }
     }
 
+    // 创建一个新的指标，表示数据平面网络处理器的平均空闲百分比
     newGauge(s"${DataPlaneMetricPrefix}NetworkProcessorAvgIdlePercent", () => SocketServer.this.synchronized {
+      // 获取所有数据平面处理器的io等待比例指标名称
       val ioWaitRatioMetricNames = dataPlaneProcessors.values.asScala.iterator.map { p =>
         metrics.metricName("io-wait-ratio", MetricsGroup, p.metricTags)
       }
+      // 计算平均空闲百分比
       ioWaitRatioMetricNames.map { metricName =>
         Option(metrics.metric(metricName)).fold(0.0)(m => Math.min(m.metricValue.asInstanceOf[Double], 1.0))
       }.sum / dataPlaneProcessors.size
     })
+
+    // 创建一个新的指标，表示控制平面网络处理器的平均空闲百分比
     newGauge(s"${ControlPlaneMetricPrefix}NetworkProcessorAvgIdlePercent", () => SocketServer.this.synchronized {
+      // 获取控制平面处理器的io等待比例指标名称
       val ioWaitRatioMetricName = controlPlaneProcessorOpt.map { p =>
         metrics.metricName("io-wait-ratio", "socket-server-metrics", p.metricTags)
       }
+      // 计算平均空闲百分比
       ioWaitRatioMetricName.map { metricName =>
         Option(metrics.metric(metricName)).fold(0.0)(m => Math.min(m.metricValue.asInstanceOf[Double], 1.0))
       }.getOrElse(Double.NaN)
     })
+
+    // 创建一个新的指标，表示内存池可用内存
     newGauge("MemoryPoolAvailable", () => memoryPool.availableMemory)
+
+    // 创建一个新的指标，表示内存池已用内存
     newGauge("MemoryPoolUsed", () => memoryPool.size() - memoryPool.availableMemory)
+
+    // 创建一个新的指标，表示数据平面已终止的过期连接数
     newGauge(s"${DataPlaneMetricPrefix}ExpiredConnectionsKilledCount", () => SocketServer.this.synchronized {
+      // 获取所有数据平面处理器的过期连接数指标名称
       val expiredConnectionsKilledCountMetricNames = dataPlaneProcessors.values.asScala.iterator.map { p =>
         metrics.metricName("expired-connections-killed-count", "socket-server-metrics", p.metricTags)
       }
+      // 计算过期连接数总和
       expiredConnectionsKilledCountMetricNames.map { metricName =>
         Option(metrics.metric(metricName)).fold(0.0)(m => m.metricValue.asInstanceOf[Double])
       }.sum
     })
+
+    // 创建一个新的指标，表示控制平面已终止的过期连接数
     newGauge(s"${ControlPlaneMetricPrefix}ExpiredConnectionsKilledCount", () => SocketServer.this.synchronized {
+      // 获取控制平面处理器的过期连接数指标名称
       val expiredConnectionsKilledCountMetricNames = controlPlaneProcessorOpt.map { p =>
         metrics.metricName("expired-connections-killed-count", "socket-server-metrics", p.metricTags)
       }
+      // 计算过期连接数
       expiredConnectionsKilledCountMetricNames.map { metricName =>
         Option(metrics.metric(metricName)).fold(0.0)(m => m.metricValue.asInstanceOf[Double])
       }.getOrElse(0.0)

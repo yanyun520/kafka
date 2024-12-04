@@ -57,7 +57,7 @@ class AccessControlEntryData {
      * no such field.
      */
     public String findIndefiniteField() {
-        if (principal() == null)
+        if (principal() == null
             return "Principal is NULL";
         if (host() == null)
             return "Host is NULL";

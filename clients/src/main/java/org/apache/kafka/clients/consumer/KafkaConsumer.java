@@ -663,16 +663,21 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     public KafkaConsumer(Map<String, Object> configs,
                          Deserializer<K> keyDeserializer,
                          Deserializer<V> valueDeserializer) {
+        // 创建ConsumerConfig对象
         ConsumerConfig config = new ConsumerConfig(ConsumerConfig.appendDeserializerToConfig(configs, keyDeserializer, valueDeserializer));
         try {
+            // 创建GroupRebalanceConfig对象
             GroupRebalanceConfig groupRebalanceConfig = new GroupRebalanceConfig(config,
                     GroupRebalanceConfig.ProtocolType.CONSUMER);
 
+            // 设置groupId
             this.groupId = Optional.ofNullable(groupRebalanceConfig.groupId);
+            // 设置clientId
             this.clientId = config.getString(CommonClientConfigs.CLIENT_ID_CONFIG);
 
             LogContext logContext;
 
+            // 如果设置了group.instance.id，则将其添加到日志上下文中
             // If group.instance.id is set, we will append it to the log context.
             if (groupRebalanceConfig.groupInstanceId.isPresent()) {
                 logContext = new LogContext("[Consumer instanceId=" + groupRebalanceConfig.groupInstanceId.get() +
@@ -681,63 +686,91 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                 logContext = new LogContext("[Consumer clientId=" + clientId + ", groupId=" + groupId.orElse("null") + "] ");
             }
 
+            // 设置日志记录器
             this.log = logContext.logger(getClass());
+            // 获取是否启用自动提交配置
             boolean enableAutoCommit = config.maybeOverrideEnableAutoCommit();
+            // 如果groupId为空，则发出警告
             groupId.ifPresent(groupIdStr -> {
                 if (groupIdStr.isEmpty()) {
                     log.warn("Support for using the empty group id by consumers is deprecated and will be removed in the next major release.");
                 }
             });
 
+            // 初始化Kafka消费者
             log.debug("Initializing the Kafka consumer");
+            // 设置请求超时时间
             this.requestTimeoutMs = config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG);
+            // 设置默认API超时时间
             this.defaultApiTimeoutMs = config.getInt(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG);
+            // 设置系统时间
             this.time = Time.SYSTEM;
+            // 构建度量指标
             this.metrics = buildMetrics(config, time, clientId);
+            // 设置重试回退时间
             this.retryBackoffMs = config.getLong(ConsumerConfig.RETRY_BACKOFF_MS_CONFIG);
 
+            // 加载拦截器并确保它们获取clientId
             // load interceptors and make sure they get clientId
             Map<String, Object> userProvidedConfigs = config.originals();
             userProvidedConfigs.put(ConsumerConfig.CLIENT_ID_CONFIG, clientId);
             List<ConsumerInterceptor<K, V>> interceptorList = (List) (new ConsumerConfig(userProvidedConfigs, false)).getConfiguredInstances(ConsumerConfig.INTERCEPTOR_CLASSES_CONFIG,
                     ConsumerInterceptor.class);
             this.interceptors = new ConsumerInterceptors<>(interceptorList);
+            // 如果keyDeserializer为空，则配置默认的keyDeserializer
             if (keyDeserializer == null) {
                 this.keyDeserializer = config.getConfiguredInstance(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, Deserializer.class);
                 this.keyDeserializer.configure(config.originals(Collections.singletonMap(ConsumerConfig.CLIENT_ID_CONFIG, clientId)), true);
             } else {
+                // 忽略配置的keyDeserializer类
                 config.ignore(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG);
                 this.keyDeserializer = keyDeserializer;
             }
+            // 如果valueDeserializer为空，则配置默认的valueDeserializer
             if (valueDeserializer == null) {
                 this.valueDeserializer = config.getConfiguredInstance(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, Deserializer.class);
                 this.valueDeserializer.configure(config.originals(Collections.singletonMap(ConsumerConfig.CLIENT_ID_CONFIG, clientId)), false);
             } else {
+                // 忽略配置的valueDeserializer类
                 config.ignore(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG);
                 this.valueDeserializer = valueDeserializer;
             }
+            // 设置偏移量重置策略
             OffsetResetStrategy offsetResetStrategy = OffsetResetStrategy.valueOf(config.getString(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG).toUpperCase(Locale.ROOT));
+            // 创建订阅状态对象
             this.subscriptions = new SubscriptionState(logContext, offsetResetStrategy);
+            // 配置集群资源监听器
             ClusterResourceListeners clusterResourceListeners = configureClusterResourceListeners(keyDeserializer,
                     valueDeserializer, metrics.reporters(), interceptorList);
+            // 创建ConsumerMetadata对象
             this.metadata = new ConsumerMetadata(retryBackoffMs,
                     config.getLong(ConsumerConfig.METADATA_MAX_AGE_CONFIG),
                     !config.getBoolean(ConsumerConfig.EXCLUDE_INTERNAL_TOPICS_CONFIG),
                     config.getBoolean(ConsumerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG),
                     subscriptions, logContext, clusterResourceListeners);
+            // 解析并验证引导服务器的地址
             List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(
                     config.getList(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG), config.getString(ConsumerConfig.CLIENT_DNS_LOOKUP_CONFIG));
+            // 引导元数据
             this.metadata.bootstrap(addresses);
+            // 设置度量指标组前缀
             String metricGrpPrefix = "consumer";
 
+            // 创建FetcherMetricsRegistry对象
             FetcherMetricsRegistry metricsRegistry = new FetcherMetricsRegistry(Collections.singleton(CLIENT_ID_METRIC_TAG), metricGrpPrefix);
+            // 创建ChannelBuilder对象
             ChannelBuilder channelBuilder = ClientUtils.createChannelBuilder(config, time, logContext);
+            // 设置隔离级别
             IsolationLevel isolationLevel = IsolationLevel.valueOf(
                     config.getString(ConsumerConfig.ISOLATION_LEVEL_CONFIG).toUpperCase(Locale.ROOT));
+            // 创建throttleTimeSensor对象
             Sensor throttleTimeSensor = Fetcher.throttleTimeSensor(metrics, metricsRegistry);
+            // 设置心跳间隔时间
             int heartbeatIntervalMs = config.getInt(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG);
 
+            // 创建ApiVersions对象
             ApiVersions apiVersions = new ApiVersions();
+            // 创建NetworkClient对象
             NetworkClient netClient = new NetworkClient(
                     new Selector(config.getLong(ConsumerConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG), metrics, time, metricGrpPrefix, channelBuilder, logContext),
                     this.metadata,
@@ -756,6 +789,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     apiVersions,
                     throttleTimeSensor,
                     logContext);
+            // 创建ConsumerNetworkClient对象
             this.client = new ConsumerNetworkClient(
                     logContext,
                     netClient,
@@ -765,8 +799,10 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG),
                     heartbeatIntervalMs); //Will avoid blocking an extended period of time to prevent heartbeat thread starvation
 
+            // 获取分配器实例
             this.assignors = getAssignorInstances(config.getList(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG), config.originals());
 
+            // 如果groupId为空，则不创建coordinator对象
             // no coordinator will be constructed for the default (null) group id
             this.coordinator = !groupId.isPresent() ? null :
                 new ConsumerCoordinator(groupRebalanceConfig,
@@ -782,6 +818,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                         config.getInt(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG),
                         this.interceptors,
                         config.getBoolean(ConsumerConfig.THROW_ON_FETCH_STABLE_OFFSET_UNSUPPORTED));
+            // 创建Fetcher对象
             this.fetcher = new Fetcher<>(
                     logContext,
                     this.client,
@@ -804,17 +841,23 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     isolationLevel,
                     apiVersions);
 
+            // 创建KafkaConsumerMetrics对象
             this.kafkaConsumerMetrics = new KafkaConsumerMetrics(metrics, metricGrpPrefix);
 
+            // 记录未使用的配置
             config.logUnused();
+            // 注册应用信息
             AppInfoParser.registerAppInfo(JMX_PREFIX, clientId, metrics, time.milliseconds());
+            // 输出Kafka消费者初始化完成的日志
             log.debug("Kafka consumer initialized");
         } catch (Throwable t) {
+            // 如果内部对象已经构建，则调用close方法以防止资源泄漏；如果log为null，则不需要调用close方法
             // call close methods if internal objects are already constructed; this is to prevent resource leak. see KAFKA-2121
             // we do not need to call `close` at all when `log` is null, which means no internal objects were initialized.
             if (this.log != null) {
                 close(0, true);
             }
+            // 抛出异常
             // now propagate the exception
             throw new KafkaException("Failed to construct kafka consumer", t);
         }

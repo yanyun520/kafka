@@ -77,6 +77,7 @@ public class ExactlyOnceMessageProcessor extends Thread {
 
     @Override
     public void run() {
+        // 初始化事务调用应该始终首先发生，以便清除上一代中的僵尸事务。
         // Init transactions call should always happen first in order to clear zombie transactions from previous generation.
         producer.initTransactions();
 
@@ -85,11 +86,15 @@ public class ExactlyOnceMessageProcessor extends Thread {
         consumer.subscribe(Collections.singleton(inputTopic), new ConsumerRebalanceListener() {
             @Override
             public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
+                // 撤销分区分配以启动重新平衡。
+                // Revoked partition assignment to kick-off rebalancing:
                 printWithTxnId("Revoked partition assignment to kick-off rebalancing: " + partitions);
             }
 
             @Override
             public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
+                // 在重新平衡后接收分区分配。
+                // Received partition assignment after rebalancing:
                 printWithTxnId("Received partition assignment after rebalancing: " + partitions);
                 messageRemaining.set(messagesRemaining(consumer));
             }
@@ -100,9 +105,11 @@ public class ExactlyOnceMessageProcessor extends Thread {
             try {
                 ConsumerRecords<Integer, String> records = consumer.poll(Duration.ofMillis(200));
                 if (records.count() > 0) {
+                    // 开始一个新的事务会话。
                     // Begin a new transaction session.
                     producer.beginTransaction();
                     for (ConsumerRecord<Integer, String> record : records) {
+                        // 处理记录并将其发送到下游。
                         // Process the record and send to downstream.
                         ProducerRecord<Integer, String> customizedRecord = transform(record);
                         producer.send(customizedRecord);
@@ -110,32 +117,41 @@ public class ExactlyOnceMessageProcessor extends Thread {
 
                     Map<TopicPartition, OffsetAndMetadata> offsets = consumerOffsets();
 
-                    // Checkpoint the progress by sending offsets to group coordinator broker.
+                    // 通过将偏移量发送到组协调器代理来检查进度。
                     // Note that this API is only available for broker >= 2.5.
+                    // Checkpoint the progress by sending offsets to group coordinator broker.
                     producer.sendOffsetsToTransaction(offsets, consumer.groupMetadata());
 
+                    // 完成事务。现在，所有发送的记录都应可供消费。
                     // Finish the transaction. All sent records should be visible for consumption now.
                     producer.commitTransaction();
                     messageProcessed += records.count();
                 }
             } catch (ProducerFencedException e) {
+                // 如果事务ID已被另一个进程占用，则抛出Kafka异常。
                 throw new KafkaException(String.format("The transactional.id %s has been claimed by another process", transactionalId));
             } catch (FencedInstanceIdException e) {
+                // 如果组实例ID已被另一个进程占用，则抛出Kafka异常。
                 throw new KafkaException(String.format("The group.instance.id %s has been claimed by another process", groupInstanceId));
             } catch (KafkaException e) {
+                // 如果我们没有被围起来，尝试中止事务并继续。如果生产者遇到致命错误，这将立即引发。
                 // If we have not been fenced, try to abort the transaction and continue. This will raise immediately
                 // if the producer has hit a fatal error.
                 producer.abortTransaction();
 
+                // 消费者的获取位置需要恢复到事务开始之前的提交偏移量。
                 // The consumer fetch position needs to be restored to the committed offset
                 // before the transaction started.
                 resetToLastCommittedPositions(consumer);
             }
 
+            // 更新剩余消息数量。
             messageRemaining.set(messagesRemaining(consumer));
+            // 打印剩余消息数量。
             printWithTxnId("Message remaining: " + messageRemaining);
         }
 
+        // 打印已处理的消息数量。
         printWithTxnId("Finished processing " + messageProcessed + " records");
         latch.countDown();
     }

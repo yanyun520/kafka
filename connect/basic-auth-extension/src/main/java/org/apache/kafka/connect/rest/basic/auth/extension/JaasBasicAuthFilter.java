@@ -97,32 +97,41 @@ public class JaasBasicAuthFilter implements ContainerRequestFilter {
         private String password;
 
         public BasicAuthCallBackHandler(String credentials) {
+            // 检查凭证是否为空
             if (credentials == null) {
                 log.trace("No credentials were provided with the request");
                 return;
             }
 
+            // 查找空格位置
             int space = credentials.indexOf(SPACE);
+            // 检查凭证格式是否正确
             if (space <= 0) {
                 log.trace("Request credentials were malformed; no space present in value for authorization header");
                 return;
             }
 
+            // 提取认证方法
             String method = credentials.substring(0, space);
+            // 检查是否支持基本认证
             if (!BASIC.equalsIgnoreCase(method)) {
                 log.trace("Request credentials used {} authentication, but only {} supported; ignoring", method, BASIC);
                 return;
             }
 
+            // 提取并解码凭证
             credentials = credentials.substring(space + 1);
             credentials = new String(Base64.getDecoder().decode(credentials),
                                      StandardCharsets.UTF_8);
+            // 查找冒号位置
             int i = credentials.indexOf(COLON);
+            // 检查凭证格式是否正确
             if (i <= 0) {
                 log.trace("Request credentials were malformed; no colon present between username and password");
                 return;
             }
 
+            // 提取用户名和密码
             username = credentials.substring(0, i);
             password = credentials.substring(i + 1);
         }
@@ -131,17 +140,25 @@ public class JaasBasicAuthFilter implements ContainerRequestFilter {
         public void handle(Callback[] callbacks) throws UnsupportedCallbackException {
             List<Callback> unsupportedCallbacks = new ArrayList<>();
             for (Callback callback : callbacks) {
+                // 处理用户名回调
+                // 处理用户名回调
                 if (callback instanceof NameCallback) {
                     ((NameCallback) callback).setName(username);
                 } else if (callback instanceof PasswordCallback) {
+                    // 处理密码回调
+                    // 处理密码回调
                     ((PasswordCallback) callback).setPassword(password != null
                         ? password.toCharArray()
                         : null
                     );
                 } else {
+                    // 记录不支持的回调
+                    // 记录不支持的回调
                     unsupportedCallbacks.add(callback);
                 }
             }
+            // 检查是否有不支持的回调
+            // 检查是否有不支持的回调
             if (!unsupportedCallbacks.isEmpty())
                 throw new ConnectException(String.format(
                     "Unsupported callbacks %s; request authentication will fail. "

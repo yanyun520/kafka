@@ -132,24 +132,42 @@ public interface Schema {
     }
 
 
+    // 创建8位整数类型的Schema
     Schema INT8_SCHEMA = SchemaBuilder.int8().build();
+    // 创建16位整数类型的Schema
     Schema INT16_SCHEMA = SchemaBuilder.int16().build();
+    // 创建32位整数类型的Schema
     Schema INT32_SCHEMA = SchemaBuilder.int32().build();
+    // 创建64位整数类型的Schema
     Schema INT64_SCHEMA = SchemaBuilder.int64().build();
+    // 创建32位浮点数类型的Schema
     Schema FLOAT32_SCHEMA = SchemaBuilder.float32().build();
+    // 创建64位浮点数类型的Schema
     Schema FLOAT64_SCHEMA = SchemaBuilder.float64().build();
+    // 创建布尔类型的Schema
     Schema BOOLEAN_SCHEMA = SchemaBuilder.bool().build();
+    // 创建字符串类型的Schema
     Schema STRING_SCHEMA = SchemaBuilder.string().build();
+    // 创建字节类型的Schema
     Schema BYTES_SCHEMA = SchemaBuilder.bytes().build();
 
+    // 创建可选的8位整数类型的Schema
     Schema OPTIONAL_INT8_SCHEMA = SchemaBuilder.int8().optional().build();
+    // 创建可选的16位整数类型的Schema
     Schema OPTIONAL_INT16_SCHEMA = SchemaBuilder.int16().optional().build();
+    // 创建可选的32位整数类型的Schema
     Schema OPTIONAL_INT32_SCHEMA = SchemaBuilder.int32().optional().build();
+    // 创建可选的64位整数类型的Schema
     Schema OPTIONAL_INT64_SCHEMA = SchemaBuilder.int64().optional().build();
+    // 创建可选的32位浮点数类型的Schema
     Schema OPTIONAL_FLOAT32_SCHEMA = SchemaBuilder.float32().optional().build();
+    // 创建可选的64位浮点数类型的Schema
     Schema OPTIONAL_FLOAT64_SCHEMA = SchemaBuilder.float64().optional().build();
+    // 创建可选的布尔类型的Schema
     Schema OPTIONAL_BOOLEAN_SCHEMA = SchemaBuilder.bool().optional().build();
+    // 创建可选的字符串类型的Schema
     Schema OPTIONAL_STRING_SCHEMA = SchemaBuilder.string().optional().build();
+    // 创建可选的字节类型的Schema
     Schema OPTIONAL_BYTES_SCHEMA = SchemaBuilder.bytes().optional().build();
 
     /**

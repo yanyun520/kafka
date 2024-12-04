@@ -492,26 +492,40 @@ public class SaslClientAuthenticator implements Authenticator {
     }
 
     private byte[] receiveToken() throws IOException {
+        // 如果saslAuthenticateVersion被设置为禁用Kafka SASL认证头
         if (saslAuthenticateVersion == DISABLE_KAFKA_SASL_AUTHENTICATE_HEADER) {
+            // 直接接收响应或令牌
             return receiveResponseOrToken();
         } else {
+            // 接收Kafka响应
             SaslAuthenticateResponse response = (SaslAuthenticateResponse) receiveKafkaResponse();
+            // 如果响应不为空
             if (response != null) {
+                // 获取错误码
                 Errors error = response.error();
+                // 如果存在错误
                 if (error != Errors.NONE) {
+                    // 设置SASL状态为失败
                     setSaslState(SaslState.FAILED);
+                    // 获取错误消息
                     String errMsg = response.errorMessage();
+                    // 抛出异常，错误消息为空则抛出默认异常，否则抛出带有错误消息的异常
                     throw errMsg == null ? error.exception() : error.exception(errMsg);
                 }
+                // 获取会话生命周期
                 long sessionLifetimeMs = response.sessionLifetimeMs();
+                // 如果会话生命周期大于0
                 if (sessionLifetimeMs > 0L)
+                    // 设置正会话生命周期
                     reauthInfo.positiveSessionLifetimeMs = sessionLifetimeMs;
+                // 返回SASL认证字节数组
                 return Utils.copyArray(response.saslAuthBytes());
             } else
+                // 如果响应为空，则返回null
                 return null;
         }
     }
-
+1
 
     private byte[] createSaslToken(final byte[] saslToken, boolean isInitial) throws SaslException {
         if (saslToken == null)
@@ -555,34 +569,42 @@ public class SaslClientAuthenticator implements Authenticator {
     }
 
     private AbstractResponse receiveKafkaResponse() throws IOException {
+        // 如果netInBuffer为空，则初始化它
         if (netInBuffer == null)
             netInBuffer = new NetworkReceive(node);
+        // 获取netInBuffer的引用
         NetworkReceive receive = netInBuffer;
         try {
+            // 接收响应或令牌
             byte[] responseBytes = receiveResponseOrToken();
+            // 如果响应字节为空，则返回null
             if (responseBytes == null)
                 return null;
             else {
+                // 解析响应
                 AbstractResponse response = NetworkClient.parseResponse(ByteBuffer.wrap(responseBytes), currentRequestHeader);
+                // 将当前请求头置为空
                 currentRequestHeader = null;
+                // 返回解析后的响应
                 return response;
             }
         } catch (SchemaException | IllegalArgumentException e) {
             /*
-             * Account for the fact that during re-authentication there may be responses
-             * arriving for requests that were sent in the past.
+             * 考虑到在重新认证期间，可能会有针对过去发送的请求的响应到达
              */
             if (reauthInfo.reauthenticating()) {
                 /*
-                 * It didn't match the current request header, so it must be unrelated to
-                 * re-authentication. Save it so it can be processed later.
+                 * 它与当前的请求头不匹配，因此它必须与重新认证无关。将其保存以便稍后处理
                  */
                 receive.payload().rewind();
                 reauthInfo.pendingAuthenticatedReceives.add(receive);
                 return null;
             }
+            // 日志记录调试信息
             log.debug("Invalid SASL mechanism response, server may be expecting only GSSAPI tokens");
+            // 设置SASL状态为失败
             setSaslState(SaslState.FAILED);
+            // 抛出异常
             throw new IllegalSaslStateException("Invalid SASL mechanism response, server may be expecting a different protocol", e);
         }
     }
