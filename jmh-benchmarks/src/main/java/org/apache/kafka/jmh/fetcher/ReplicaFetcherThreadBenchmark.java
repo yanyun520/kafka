@@ -234,12 +234,15 @@ public class ReplicaFetcherThreadBenchmark {
 
 
     static class ReplicaFetcherBenchThread extends ReplicaFetcherThread {
+        // 线程池，用于存储TopicPartition和Partition的映射关系
         private final Pool<TopicPartition, Partition> pool;
 
+        // 构造函数，初始化ReplicaFetcherBenchThread
         ReplicaFetcherBenchThread(KafkaConfig config,
                                   ReplicaManager replicaManager,
                                   Pool<TopicPartition,
                                   Partition> partitions) {
+            // 调用父类构造函数，设置线程名称、线程优先级、BrokerEndPoint、Kafka配置、FailedPartitions实例、ReplicaManager实例、Metrics实例、时间系统、ReplicaQuota实例以及Option.empty()
             super("name",
                     3,
                     new BrokerEndPoint(3, "host", 3000),
@@ -249,15 +252,18 @@ public class ReplicaFetcherThreadBenchmark {
                     new Metrics(),
                     Time.SYSTEM,
                     new ReplicaQuota() {
+                        // 判断配额是否超出
                         @Override
                         public boolean isQuotaExceeded() {
                             return false;
                         }
 
+                        // 记录配额值
                         @Override
                         public void record(long value) {
                         }
 
+                        // 判断特定TopicPartition是否被限制
                         @Override
                         public boolean isThrottled(TopicPartition topicPartition) {
                             return false;
@@ -265,54 +271,68 @@ public class ReplicaFetcherThreadBenchmark {
                     },
                     Option.empty());
             
+            // 将传入的partitions赋值给pool
             pool = partitions;
         }
 
+        // 获取最新epoch值
         @Override
         public Option<Object> latestEpoch(TopicPartition topicPartition) {
             return Option.apply(0);
         }
 
+        // 获取日志起始偏移量
         @Override
         public long logStartOffset(TopicPartition topicPartition) {
             return pool.get(topicPartition).localLogOrException().logStartOffset();
         }
 
+        // 获取日志结束偏移量
         @Override
         public long logEndOffset(TopicPartition topicPartition) {
             return 0;
         }
 
+        // 截断日志
         @Override
         public void truncate(TopicPartition tp, OffsetTruncationState offsetTruncationState) {
+            // 假装截断以移动到Fetching状态
             // pretend to truncate to move to Fetching state
         }
 
+        // 获取指定epoch的结束偏移量
         @Override
         public Option<OffsetAndEpoch> endOffsetForEpoch(TopicPartition topicPartition, int epoch) {
             return OptionConverters.toScala(Optional.of(new OffsetAndEpoch(0, 0)));
         }
 
+        // 处理分区数据
         @Override
         public Option<LogAppendInfo> processPartitionData(TopicPartition topicPartition, long fetchOffset, FetchResponse.PartitionData partitionData) {
             return Option.empty();
         }
 
+        // 从Leader获取最早的偏移量
         @Override
         public long fetchEarliestOffsetFromLeader(TopicPartition topicPartition, int currentLeaderEpoch) {
             return 0;
         }
 
+        // 获取Epoch的结束偏移量
         @Override
         public Map<TopicPartition, EpochEndOffset> fetchEpochEndOffsets(Map<TopicPartition, OffsetsForLeaderEpochRequest.PartitionData> partitions) {
+            // 创建一个可变的HashMap来存储TopicPartition和EpochEndOffset的映射关系
             scala.collection.mutable.Map<TopicPartition, EpochEndOffset> endOffsets = new scala.collection.mutable.HashMap<>();
+            // 遍历partitions的键（即TopicPartition）
             Iterator<TopicPartition> iterator = partitions.keys().iterator();
+            // 遍历每个TopicPartition，并将它们与EpochEndOffset添加到endOffsets中
             while (iterator.hasNext()) {
                 endOffsets.put(iterator.next(), new EpochEndOffset(0, 100));
             }
             return endOffsets;
         }
 
+        // 从Leader获取数据
         @Override
         public Map<TopicPartition, FetchResponse.PartitionData<Records>> fetchFromLeader(FetchRequest.Builder fetchRequest) {
             return new scala.collection.mutable.HashMap<>();
