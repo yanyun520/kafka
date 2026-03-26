@@ -121,6 +121,7 @@ BlockingQueue<BackgroundEvent> backgroundEventsQueue;
 
 **关键点**：两个线程通过 `BlockingQueue` 解耦。应用线程发出 `ApplicationEvent`，网络线程处理后通过 `BackgroundEvent` 通知结果。Rebalance 回调（`onPartitionsRevoked`/`onPartitionsAssigned`）在应用线程执行，但由网络线程触发。
 
+
 ---
 
 ## 3. 客户端状态机（MemberState）
