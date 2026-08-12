@@ -19,7 +19,7 @@ package org.apache.kafka.streams.state.internals;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.LongDeserializer;
-import org.apache.kafka.common.utils.ByteUtils;
+import org.apache.kafka.common.utils.internals.ByteUtils;
 import org.apache.kafka.streams.kstream.internals.WrappingNullableDeserializer;
 import org.apache.kafka.streams.processor.internals.SerdeGetter;
 import org.apache.kafka.streams.state.ValueTimestampHeaders;
@@ -95,13 +95,5 @@ class ValueTimestampHeadersDeserializer<V> implements WrappingNullableDeserializ
         initNullableDeserializer(valueDeserializer, getter);
     }
 
-    /**
-     * Extract value from serialized ValueTimestampHeaders.
-     */
-    static <T> T value(final byte[] rawValueTimestampHeaders, final Deserializer<T> deserializer) {
-        if (rawValueTimestampHeaders == null) {
-            return null;
-        }
-        return deserializer.deserialize("", Utils.rawPlainValue(rawValueTimestampHeaders));
-    }
+
 }

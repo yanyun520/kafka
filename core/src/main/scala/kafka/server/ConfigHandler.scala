@@ -18,7 +18,7 @@
 package kafka.server
 
 import java.util.{Collections, Properties}
-import kafka.server.QuotaFactory.QuotaManagers
+import org.apache.kafka.server.quota.QuotaFactory.QuotaManagers
 import kafka.utils.Logging
 import org.apache.kafka.server.config.QuotaConfig
 import org.apache.kafka.common.metrics.Quota._
@@ -51,7 +51,7 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
                               topicConfig: Properties): Unit = {
     val logManager = replicaManager.logManager
 
-    val logs = logManager.logsByTopic(topic)
+    val logs = logManager.logsByTopic(topic).asScala
     val wasRemoteLogEnabled = logs.exists(_.remoteLogEnabled())
     val wasCopyDisabled = logs.exists(_.config.remoteLogCopyDisable())
 
